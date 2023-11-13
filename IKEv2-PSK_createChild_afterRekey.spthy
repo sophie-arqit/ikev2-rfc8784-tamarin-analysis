@@ -20,12 +20,6 @@ begin
 builtins: hashing, diffie-hellman, symmetric-encryption
 functions: hmac/2, prf_plus/2, select/2, prf/2, childRequest/1
 
-/*
-George's tip: when debugging create a restriction of the following form to avoid multiple cases of the same rule in the graph
-Also when proving the legit exists statements (i.e. not those seeking a counter-example), these should still hold with the restriction
-restriction: AuthCreated @ #i & #j ==> i = j
-
-*/
 /**********************************
  * Key Reveals as defined in the adversary model
 **********************************/
