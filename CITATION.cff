@@ -1,1 +1,6 @@
-
+cff-version: 1.2.0
+authors:
+  - family-names: Stevens
+    given-names: Sophie
+title: "Github Code Repository: Formal verification of the post-quantum security properties of IKEv2 PPK (RFC 8784) using the Tamarin Prover"
+date-released: 2023-11-13
