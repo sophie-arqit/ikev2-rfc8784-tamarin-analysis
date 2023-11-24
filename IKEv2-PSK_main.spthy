@@ -848,10 +848,6 @@ summary of summaries:
   CreateChild_aliveness_I_simple (all-traces): falsified - found trace (28 steps)
   CreateChild_aliveness_R_simple_Contrapositive (exists-trace): verified (26 steps)
   CreateChild_aliveness_R_simple_Contrapositive_alt(exists-trace): verified (29 steps)
-  temp (exists-trace): analysis incomplete (1 steps)
-
-==============================================================================
-
 ==============================================================================*/
 
 lemma CreateChild_exists: exists-trace
