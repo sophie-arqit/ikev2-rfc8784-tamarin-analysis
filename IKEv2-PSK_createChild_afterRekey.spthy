@@ -11,6 +11,10 @@
 *
 * RFC PPK: https://www.rfc-editor.org/rfc/rfc8784.pdf
 * RFC IKEv2: https://www.rfc-editor.org/rfc/pdfrfc/rfc7296.txt.pdf
+*
+* In this model, we are interested in processes subsequent to the first IKE_SA step. Thus we assume that this has been completed
+* We give the adversary knowledge of all Out variables within the IKE_SA, and the keys that the adversary can learn.
+* Specifically, the adversary knows: SK_ai, SK_ar, SK_ei, SK_er
 */
 
 theory IKEv2PSK_createChild_afterRekey
@@ -31,8 +35,9 @@ rule reveal_dh:
 
 
 /*******************************************************
-======== IKEv2 Protocol Preliminaries =======
+======== IKEv2 Protocol Preliminaries ======
 *******************************************************/
+
 rule enrol_agent: // give each actor its own ID
 	[Fr(~ID)]
 	--[
@@ -117,8 +122,7 @@ in
 	, ICanRekey($I, $R, Keys)
 	, RCanRekey($I, $R, Keys)
 	, Out(<~SPI_init, ~SPI_resp, ~e_init, ~e_resp, ~n_init, ~n_resp>)
-	, !DHtoReveal($I, ~e_init)
-	, !DHtoReveal($R, ~e_resp)]
+	, Out(<SK_ai, SK_ar, SK_ei, SK_er>)] // the adversary can learn all the keys that don't involve the ppk
 
 
 
@@ -157,7 +161,6 @@ in
 
 rule IKE_REKEY_SA_RESP:  
 let 	
-
 	Keys = <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
 
 	pl_init = <'REKEY_REQUEST', newSPI_init, n_init, KEi_rekey>
@@ -252,7 +255,7 @@ let
 	encr_init = senc(pl_init, SK_ei)
 	integ_init = hmac(pl_init, SK_ai)
 
-//	msg = <SPI_init, SPI_resp, 'CREATE_CHILD_REQUEST', 'msg3', 'flag_i', encr_init , integ_init>
+//	msg = <SPI_init, SPI_resp, 'CREATE_CHILD_REQUEST', 'msg3', 'flag_i', encr_init , integ_init> // use simpler version of msg for modelling purposes
 	msg = <'CREATE_CHILD_REQUEST', 'msg3', 'flag_i', encr_init , integ_init>
 in
 	/*
@@ -381,17 +384,16 @@ lemma Rekey_exists: exists-trace
 ======== Lemmas: Create Child SA =========
 *******************************************************/
 lemma CreateChild_exists: exists-trace
-	"Ex spiI spiR nI nR I R Key newKeys new_spiI new_spiR new_nI new_nR child_spiI child_spiR childKeys #i #j1 #j2 #j3 #j4 #j5.
-	IKE_SA_CompletedFull(spiI, spiR, nI, nR, I, R, Key) @#i
-	& REKEY_SA_CompleteR(I, R, Key, newKeys, new_spiI, new_spiR, new_nI, new_nR) @ #j1
-	& REKEY_SA_CompleteI(I, R, Key, newKeys, new_spiI, new_spiR, new_nI, new_nR) @ #j2
+	"Ex spiI spiR nI nR I R Keys newKeys new_spiI new_spiR new_nI new_nR child_spiI child_spiR childKeys #i #j1 #j2 #j3 #j4 #j5.
+	IKE_SA_CompletedFull(spiI, spiR, nI, nR, I, R, Keys) @#i
+	& REKEY_SA_CompleteR(I, R, Keys, newKeys, new_spiI, new_spiR, new_nI, new_nR) @ #j1
+	& REKEY_SA_CompleteI(I, R, Keys, newKeys, new_spiI, new_spiR, new_nI, new_nR) @ #j2
 	& #i<#j1 & #j1< #j2
 	& ChildRequestI(I, R, newKeys, child_spiI) @#j3
 	& #j2<#j3 
 	& CreateChildSAR(I, R, newKeys, child_spiI, child_spiR, childKeys) @ #j4 & #j3< #j4
 	& CreateChildSAI(I, R, newKeys, child_spiI, child_spiR, childKeys) @ #j5 & #j4< #j5"
 
-// verified
 lemma CreateChild_aliveness_I [use_induction]: // the initiator creates a new Child SA and the responder is alive
     "All spiI spiR nI nR I R Key newKeys new_spiI new_spiR new_nI new_nR child_spiI child_spiR childKeys #i #j1 #j2 #j4.
 	IKE_SA_CompletedFull(spiI, spiR, nI, nR, I, R, Key) @#i
@@ -401,7 +403,6 @@ lemma CreateChild_aliveness_I [use_induction]: // the initiator creates a new Ch
 	&#i<#j1 &#i<#j2 & #j2<#j4
 	==> Ex #j3. CreateChildAliveness(R) @#j3 &#j2<#j3 & #j3<#j4"
 
-// verified
 lemma CreateChild_aliveness_R [use_induction]: // the responder creates a new Child SA and the initiator is alive
 	"All spiI spiR nI nR I R Key newKeys new_spiI new_spiR new_nI new_nR child_spiI child_spiR childKeys #i #j1 #j2 #j4.
 	IKE_SA_CompletedFull(spiI, spiR, nI, nR, I, R, Key) @#i
@@ -411,16 +412,15 @@ lemma CreateChild_aliveness_R [use_induction]: // the responder creates a new Ch
 	&#i<#j1 &#i<#j2 & #j2<#j4
 	==> Ex #j3. CreateChildAliveness(I) @#j3 &#j2<#j3 & #j3<#j4" 
 
-// verified
+
 lemma CreateChild_weakAgreement_I_aux : exists-trace
-	"Ex spiI spiR nI nR I R Key newKeys new_spiI new_spiR new_nI new_nR child_spiI child_spiR childKeys #i #j1 #j2 #j4.
-	IKE_SA_CompletedFull(spiI, spiR, nI, nR, I, R, Key) @#i
-	& REKEY_SA_CompleteR(I, R, Key, newKeys, new_spiI, new_spiR, new_nI, new_nR) @ #j1
-	& REKEY_SA_CompleteI(I, R, Key, newKeys, new_spiI, new_spiR, new_nI, new_nR) @ #j2
+	"Ex spiI spiR nI nR I R Keys newKeys new_spiI new_spiR new_nI new_nR child_spiI child_spiR childKeys #i #j1 #j2 #j4.
+	IKE_SA_CompletedFull(spiI, spiR, nI, nR, I, R, Keys) @#i
+	& REKEY_SA_CompleteR(I, R, Keys, newKeys, new_spiI, new_spiR, new_nI, new_nR) @ #j1
+	& REKEY_SA_CompleteI(I, R, Keys, newKeys, new_spiI, new_spiR, new_nI, new_nR) @ #j2
 	& CreateChildSAI(I, R,newKeys, child_spiI, child_spiR, childKeys) @ #j4
 	&#i<#j1 &#i<#j2 & #j2<#j4"
 
-//verified
 lemma CreateChild_weakAgreement_R_aux: exists-trace
 	"Ex spiI spiR nI nR I R Key newKeys new_spiI new_spiR new_nI new_nR child_spiI child_spiR childKeys #i #j1 #j2 #j4.
 	IKE_SA_CompletedFull(spiI, spiR, nI, nR, I, R, Key) @#i
@@ -429,7 +429,6 @@ lemma CreateChild_weakAgreement_R_aux: exists-trace
 	& CreateChildSAR(I, R,newKeys, child_spiI, child_spiR, childKeys) @ #j4
 	&#i<#j1 &#i<#j2 & #j2<#j4"
 
-// verified
 lemma CreateChild_weakAgreement_I [use_induction]: // the initiator creates a new Child SA and the responder agrees on its role
 	"All spiI spiR nI nR I R Key newKeys new_spiI new_spiR new_nI new_nR child_spiI child_spiR childKeys #i #j1 #j2 #j4.
 	IKE_SA_CompletedFull(spiI, spiR, nI, nR, I, R, Key) @#i
@@ -439,7 +438,6 @@ lemma CreateChild_weakAgreement_I [use_induction]: // the initiator creates a ne
 	&#i<#j1 &#i<#j2 & #j2<#j4
 	==> Ex newKeys1 child_spiI1 child_spiR1 childKeys1 #j3. CreateChildSAR(I, R,newKeys1, child_spiI1, child_spiR1, childKeys1) @#j3 &#j2<#j3 & #j3<#j4"
 
-// verified
 lemma CreateChild_weakAgreement_R [use_induction]: // the responder creates a new Child SA and the initiator agrees on its role
 	"All spiI spiR nI nR I R Key newKeys new_spiI new_spiR new_nI new_nR child_spiI child_spiR childKeys #i #j1 #j2 #j4.
 	IKE_SA_CompletedFull(spiI, spiR, nI, nR, I, R, Key) @#i
@@ -449,8 +447,6 @@ lemma CreateChild_weakAgreement_R [use_induction]: // the responder creates a ne
 	&#i<#j1 &#i<#j2 & #j2<#j4
 	==> Ex newKeys1 child_spiI1 #j3. ChildRequestI(I, R, newKeys1, child_spiI1) @#j3 &#j2<#j3 & #j3<#j4"
 
-
-// verified
 lemma CreateChild_nonInjectiveAgreement_I [use_induction]: // the initiator creates a new Child SA and the responder agrees on its role and all variables
 	"All spiI spiR nI nR I R Key newKeys new_spiI new_spiR new_nI new_nR child_spiI child_spiR childKeys #i #j1 #j2 #j4.
 	IKE_SA_CompletedFull(spiI, spiR, nI, nR, I, R, Key) @#i
@@ -460,7 +456,6 @@ lemma CreateChild_nonInjectiveAgreement_I [use_induction]: // the initiator crea
 	&#i<#j1 &#i<#j2 & #j2<#j4
 	==> Ex #j3. CreateChildSAR(I, R,newKeys, child_spiI, child_spiR, childKeys) @#j3 &#j2<#j3 & #j3<#j4"
 
-// ongoing
 lemma CreateChild_nonInjectiveAgreement_R [use_induction]: // the responder creates a new Child SA and the initiator agrees on its role
 	"All spiI spiR nI nR I R Key newKeys new_spiI new_spiR new_nI new_nR child_spiI child_spiR childKeys #i #j1 #j2 #j4.
 	IKE_SA_CompletedFull(spiI, spiR, nI, nR, I, R, Key) @#i
@@ -469,7 +464,6 @@ lemma CreateChild_nonInjectiveAgreement_R [use_induction]: // the responder crea
 	& CreateChildSAR(I, R,newKeys, child_spiI, child_spiR, childKeys) @ #j4
 	&#i<#j1 &#i<#j2 & #j2<#j4
 	==> Ex #j3. ChildRequestI(I, R, newKeys, child_spiI) @#j3 &#j2<#j3 & #j3<#j4"
-
 
 lemma CreateChild_InjectiveAgreement_I [use_induction]: // the initiator creates a new Child SA and the responder agrees on its role, all variables and only creates one set of keys
 	"All spiI spiR nI nR I R Key newKeys new_spiI new_spiR new_nI new_nR child_spiI child_spiR childKeys #i #j1 #j2 #j3 #k #j4.
@@ -519,7 +513,6 @@ lemma CreateChild_InjectiveAgreement_R_v2 [use_induction]: // the responder crea
 	"
 
 /* 
-
 ==============================================================================
 summary of summaries:
 
@@ -532,14 +525,14 @@ analyzed: IKEv2-PSK_createChild_afterRekey.spthy
   CreateChild_aliveness_R (all-traces): verified (19 steps)
   CreateChild_weakAgreement_I_aux (exists-trace): verified (20 steps)
   CreateChild_weakAgreement_R_aux (exists-trace): verified (18 steps)
-  CreateChild_weakAgreement_I (all-traces): verified (123 steps)
-  CreateChild_nonInjectiveAgreement_R (all-traces): verified (71 steps)
-  CreateChild_nonInjectiveAgreement_I (all-traces): verified (123 steps)
-  CreateChild_nonInjectiveAgreement_R (all-traces): verified (71 steps)
+  CreateChild_weakAgreement_I (all-traces): verified (224 steps)
+  CreateChild_weakAgreement_R (all-traces): verified (86 steps)
+  CreateChild_nonInjectiveAgreement_I (all-traces): verified (224 steps)
+  CreateChild_nonInjectiveAgreement_R (all-traces): verified (86 steps)
   CreateChild_InjectiveAgreement_I (all-traces): verified (4 steps)
-  CreateChild_InjectiveAgreement_I_v2 (all-traces): verified (123 steps)
+  CreateChild_InjectiveAgreement_I_v2 (all-traces): verified (224 steps)
   CreateChild_InjectiveAgreement_R (all-traces): verified (4 steps)
-  CreateChild_InjectiveAgreement_R_v2 (all-traces): verified (71 steps)
+  CreateChild_InjectiveAgreement_R_v2 (all-traces): verified (86 steps)
 ==============================================================================
 */
 end
