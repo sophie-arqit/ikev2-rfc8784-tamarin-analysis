@@ -1,0 +1,1000 @@
+/*
+ * Original Protocol:	IKEv2
+ * Original Modeler:	Tobias Heider & Stefan-Lukas Gazdag & Sophia Grundner-Culemann
+ * Original Date:	10/2019
+ * Original Status:	Done
+ *
+ * Modified Protocol:	 IKEv2 PPK
+ * Modeler:               Sophie Stevens
+ * Date:	                1/2023
+ * Status:	                Complete
+*
+* RFC PPK: https://www.rfc-editor.org/rfc/rfc8784.pdf
+* RFC IKEv2: https://www.rfc-editor.org/rfc/pdfrfc/rfc7296.txt.pdf
+*
+* In this protocol we consider:
+* **** creating the initial SA
+* **** creating a child SA
+* **** rekeying the initial SA
+*
+* We do not consider rekeying a child SA
+*
+*/
+
+theory IKEv2PSK_main
+
+begin
+
+builtins: hashing, diffie-hellman, symmetric-encryption
+functions: hmac/2, prf_plus/2, select/2, prf/2
+
+/**********************************
+ * Key Reveals as defined in the adversary model
+**********************************/
+
+rule reveal_dh:
+	[ !DHtoReveal($I, k) ]
+	--[RevDH($I)]->
+	[ Out(k) ]
+
+/*******************************************************
+======== IKEv2 Protocol Preliminaries =======
+*******************************************************/
+rule enrol_agent: // give each actor its own ID
+	[Fr(~ID)]
+	--[
+		UniqueID($A, ~ID)  // ID does not have to be unique but for simplification we assume that it is
+	]->	
+	[!Agent($A, ~ID)]
+
+
+rule generate_psk: // pre-shared key used for AUTH payload
+// "If  either side uses a shared secret for authentication, the names in the ID payload MUST correspond to the key used to generate the AUTH  payload."
+	[ Fr(~psk), 
+	!Agent($I, ID_init), 
+	!Agent($R, ID_resp)]
+	--[
+		GenPSK(~psk)
+		, UniquePSK($I, $R, ~psk)
+	]->
+	[ !Init_PSK($I, $R, ID_init, ID_resp, ~psk)
+	, !Resp_PSK($R, $I,  ID_init, ID_resp, ~psk)]
+
+rule generate_ppk: // pre-positioned postquantum key as per RFC8784
+	[ Fr(~ppk)
+	, Fr(~id_ppk)]
+	--[
+		GenPPK(~ppk)
+		, UniqueID(~id_ppk, ~ppk) // modelling simplification: we assume only one PPK between initiator and responder
+	]->
+	[ !Init_PPK($I, $R, ~id_ppk, ~ppk)
+	, !Resp_PPK($R, $I, ~id_ppk, ~ppk)
+	]
+
+//each ID corresponds to a unique object
+restriction UniqueID: 
+	"All ID o1 o2 #i #j. UniqueID(ID, o1)@#i & UniqueID(ID, o2) @#j ==> o1 = o2"
+
+// each object has a unique ID
+restriction UniqueID2: 
+	"All ID1 ID2 o #i #j. UniqueID(ID1, o )@#i & UniqueID(ID2, o) @#j ==> ID1 = ID2"
+
+// for the purposes of tamarin we assume that the initiator and responder share a single PSK for the AUTH payload
+restriction UniquePSK: 
+	"All I R psk1 psk2 #i #j. UniquePSK(I, R, psk1)@#i & UniquePSK(I, R, psk2) @#j ==> psk1 = psk2"
+
+
+/*******************************************************
+======== IKEv2 Protocol Transitions =========
+*******************************************************/
+rule IKE_SA_INIT_I:
+let
+	KEi = 'g'^~e_init	//  Initiator DH public share
+	msg1 = <~SPI_init, 'IKE_SA_INIT', 'msg1', 'flag_i', KEi, ~n_init, 'USE_PPK'> 
+		/* SPI : security parameter index
+		*  'msg1', 'flag_i' : flags denoting message id and originator
+		* 'USE_PPK' notification from sec 3 of PPK RFC 8784
+		*/
+
+in
+	[
+	  Fr(~n_init)	// < Initiator Nonce
+	, Fr(~SPI_init)	// < Initiator SPI (contained in HDR)
+	, Fr(~e_init)	// < Initiator DH private share
+	]
+	-->
+	[	
+	//	HDR, SAi1, KEi, Ni, N(USE_PPK)  		 
+	  Out(msg1)
+	, StateInitI($I, $R, ~SPI_init, ~e_init, ~n_init, msg1)
+	, !DHtoReveal($I, ~e_init) // this will allow a post-quantum adversary to break DH
+	]
+
+rule IKE_SA_INIT_R:
+let
+	KEr = 'g'^~e_resp	// < Initiator DH public share
+
+	/*
+	 * Generate Keying Material
+	 */
+
+	k = KEi^~e_resp
+	SKEYSEED = prf(<n_init, ~n_resp>, k)
+	S = <n_init, ~n_resp, SPI_init, ~SPI_resp>
+
+	generatedKey = <SKEYSEED, S> // this is the pair to remember to generate all keys
+
+	/*
+	 * Messages for auth hash
+	 */
+	msg1 = <SPI_init, 'IKE_SA_INIT', 'msg1', 'flag_i', KEi, n_init, 'USE_PPK'> 
+	msg2 = <SPI_init, ~SPI_resp, 'IKE_SA_INIT', 'msg1', 'flag_r', KEr, ~n_resp, 'USE_PPK'>
+in
+	[ In(msg1)	// < HDR, SAi1, KEi, Ni
+	, Fr(~n_resp)	// < Responder Nonce
+	, Fr(~SPI_resp)	// < Responder SPI
+	, Fr(~e_resp)	// < Responder DH private share
+	]
+	--[ 
+		IKE_SA_Agreed(<SPI_init, ~SPI_resp>, $R, 'responder', <n_init, ~n_resp>, generatedKey)
+	]->
+	[ Out(msg2)	// < HDR, SAr1, KEr, Nr, N(USE_PPK)
+	, StateInitR($I, $R, SPI_init, ~SPI_resp, n_init, ~n_resp, generatedKey, msg1, msg2)
+	, !DHtoReveal($R, ~e_resp)]
+
+
+rule IKE_AUTH_I:
+let
+	/*
+	 * Messages for auth hash
+	 */
+
+	msg2 = <SPI_init, SPI_resp, 'IKE_SA_INIT', 'msg1', 'flag_r', KEr, n_resp, 'USE_PPK'>
+
+	/*
+	 * Generate Keying Material
+	 */
+
+	k = KEr^e_init
+	SKEYSEED = prf(<n_init, n_resp>, k)
+	S = <n_init, n_resp, SPI_init, SPI_resp>
+
+	generatedKey = <SKEYSEED, S> // this is the pair to remember to generate all keys
+
+	/*generate different keys from SKEYSEED*/
+
+	SK_d_prime = h(select(generatedKey, 'd'))
+	SK_ai = h(select(generatedKey, 'ai'))
+	SK_ar = h(select(generatedKey, 'ar'))
+	SK_ei = h(select(generatedKey, 'ei'))
+	SK_er = h(select(generatedKey, 'er'))
+	SK_pi_prime = h(select(generatedKey, 'pi'))
+	SK_pr_prime = h(select(generatedKey, 'pr'))
+
+	SK_d = prf(ppk, <SK_d_prime, '0x01'>)
+	SK_pi = prf(ppk, <SK_pi_prime, '0x01'>)
+	SK_pr = prf(ppk, <SK_pr_prime, '0x01'>)
+	SK_ai_new = prf(ppk, <SK_ai, '0x01'>)
+	SK_ar_new = prf(ppk, <SK_ar, '0x01'>)
+	SK_ei_new = prf(ppk, <SK_ei, '0x01'>)
+	SK_er_new = prf(ppk, <SK_er, '0x01'>)
+
+
+	Keys = <SK_d, SK_ai_new, SK_ar_new, SK_ei_new, SK_er_new, SK_pi, SK_pr>
+
+	/*
+	 * Authentication and validity of IKE_SA_INIT
+	 */
+	signed_octets_init = <msg1, n_resp, hmac(ID_init, SK_pi )>
+	auth_init = h(h(psk, 'KeyPadforIKEv2'), signed_octets_init)
+
+	/*
+	 * Encryption and Integrity
+	 */
+	pl_init = <ID_init, auth_init, ~SPIi2, 'notify_initial_contact', 'ppk_identity', id_ppk> 
+	encr_init = senc(pl_init, SK_ei)
+	integ_init = hmac(pl_init, SK_ai)
+	msg3 = <SPI_init, SPI_resp, 'IKE_AUTH', 'msg2', 'flag_i', encr_init, integ_init>
+
+	/*
+	* Keys for Child SA
+	*/
+	generatedKeyMat2 = <SK_d, <n_init, n_resp>> 
+
+	SK_d_2 = h(select(generatedKeyMat2, 'd'))
+	SK_ai_2 = h(select(generatedKeyMat2, 'ai'))
+	SK_ar_2 = h(select(generatedKeyMat2, 'ar'))
+	SK_ei_2 = h(select(generatedKeyMat2, 'ei'))
+	SK_er_2 = h(select(generatedKeyMat2, 'er'))
+
+	Keys2 = <SK_d_2, SK_ai_2, SK_ar_2, SK_ei_2, SK_er_2>
+
+in
+	[ In(msg2)
+	, !Agent($I, ID_init)
+	, StateInitI($I, $R, SPI_init, e_init, n_init, msg1)
+	, !Init_PSK($I, $R, ID_init, ID_resp, psk)
+	, !Init_PPK($I, $R, id_ppk, ppk)
+	, Fr(~SPIi2)
+	]
+	--[ 
+		IKE_SA_Agreed(<SPI_init, SPI_resp>, $I, 'initiator', <n_init, n_resp>, generatedKey)
+		, AuthCreated($I, $R, auth_init)
+		, IKE_SA_Aliveness($I) 
+		, IKE_SA_WeakAgreementI(SPI_init, SPI_resp, n_init, n_resp, $I, $R, Keys)
+		, IKE_SA_InitialChildPriorI(~SPIi2, $I, $R, Keys2)
+	]->
+	[
+	/*
+	 * HDR, SK {IDi, AUTH, SAi2, TSi, TSr, N(PPK_IDENTITY, PPK_ID)}  -->
+	 */
+	 Out(msg3)
+	, TempSecurityAssociation('initiator', $I, $R, 'SA1', SPI_init, SPI_resp, generatedKey, Keys)
+	, StateAuthI($I, $R, ID_init, generatedKey, Keys, msg1, msg2, ~SPIi2, n_init, n_resp)
+	]
+
+ 
+rule IKE_AUTH_R:
+let
+	generatedKey = <SKEYSEED, S>     // this is the pair to remember to generate all keys
+
+	SK_d_prime = h(select(generatedKey, 'd'))
+	SK_ai = h(select(generatedKey, 'ai'))
+	SK_ar = h(select(generatedKey, 'ar'))
+	SK_ei = h(select(generatedKey, 'ei'))
+	SK_er = h(select(generatedKey, 'er'))
+	SK_pi_prime = h(select(generatedKey, 'pi'))
+	SK_pr_prime = h(select(generatedKey, 'pr'))
+
+
+	SK_d = prf(ppk, <SK_d_prime, '0x01'>)
+	SK_pi = prf(ppk, <SK_pi_prime, '0x01'>)
+	SK_pr = prf(ppk, <SK_pr_prime, '0x01'>)
+	SK_ai_new = prf(ppk, <SK_ai, '0x01'>)
+	SK_ar_new = prf(ppk, <SK_ar, '0x01'>)
+	SK_ei_new = prf(ppk, <SK_ei, '0x01'>)
+	SK_er_new = prf(ppk, <SK_er, '0x01'>)
+
+
+	Keys = <SK_d, SK_ai_new, SK_ar_new, SK_ei_new, SK_er_new, SK_pi, SK_pr>
+
+
+	/*
+	 * Incoming Payloads
+	 */
+	signed_octets_init = <msg1, n_resp, hmac(ID_init, SK_pi )>
+	auth_init = h(h(psk, 'KeyPadforIKEv2'), signed_octets_init)
+
+	pl_init = <ID_init, auth_init, SPIi2, 'notify_initial_contact', 'ppk_identity', id_ppk>
+	encr_init = senc(pl_init, SK_ei)
+	integ_init = hmac(pl_init, SK_ai)
+	msg3 = <SPI_init, SPI_resp, 'IKE_AUTH', 'msg2', 'flag_i', encr_init, integ_init  >
+
+
+	/*
+	 * Outgoing Payloads
+	 */
+	signed_octets_R = <msg2, n_init, hmac(ID_resp, SK_pr)>
+	auth_resp = h(h(psk, 'KeyPadforIKEv2'), signed_octets_R)
+	pl_resp = <ID_resp, auth_resp, ~SPIr2, 'ppk_identity'>
+	encr_resp = senc(pl_resp, SK_er_new)
+	integ_resp = hmac(pl_resp, SK_ar_new)
+
+	msg4 = <SPI_init, SPI_resp, 'IKE_AUTH', 'msg2', 'flag_r', encr_resp, integ_resp>
+
+	/*
+	* Keys for Child SA
+	*/
+
+	generatedKeyMat2 = <SK_d, <n_init, n_resp>> 
+
+	SK_d_2 = h(select(generatedKeyMat2, 'd'))
+	SK_ai_2 = h(select(generatedKeyMat2, 'ai'))
+	SK_ar_2 = h(select(generatedKeyMat2, 'ar'))
+	SK_ei_2 = h(select(generatedKeyMat2, 'ei'))
+	SK_er_2 = h(select(generatedKeyMat2, 'er'))
+
+	Keys2 = <SK_d_2, SK_ai_2, SK_ar_2, SK_ei_2, SK_er_2>
+in
+
+	[ In(msg3)		 
+	, !Agent($R, ID_resp)
+	, StateInitR($I, $R, SPI_init, SPI_resp, n_init, n_resp, generatedKey, msg1, msg2)
+	, !Resp_PSK($R, $I, ID_init, ID_resp, psk)
+	, !Resp_PPK($R, $I, id_ppk, ppk)
+	, Fr(~SPIr2)
+	]
+	--[ 
+		IKE_SA_CompletedR(SPI_init, SPI_resp, $I, $R, Keys)
+		, IKE_SA_Aliveness($R)
+		, IKE_SA_CompletedTightR(SPI_init, SPI_resp, n_init, n_resp,  $I, $R, Keys)
+		, IKE_ChildSA_InitialR(SPIi2, ~SPIr2,   $I, $R, Keys2)
+		, KeysMade($I, $R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr)
+		, NewKeysMade($I, $R, SK_d_2, SK_ai_2, SK_ar_2, SK_ei_2, SK_er_2)
+	  ]->
+	[ Out(msg4)
+	, !SecurityAssociation('responder', 'original', $I, $R, SPI_init, SPI_resp, generatedKey, Keys)
+	, !ChildSecurityAssociation('responder', 'original', $I, $R, SPIi2, ~SPIr2, generatedKeyMat2, Keys2)
+	, RCanCreateChild($I, $R, generatedKey, SPI_init, SPI_resp)
+	, RCanRekey($I, $R, Keys)
+	]
+
+
+rule IKE_AUTH_COMPLETE:
+let
+	Keys = <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+
+	signed_octets_R = <msg2, n_init, hmac(ID_resp, SK_pr)>
+	auth_resp = h(h(psk, 'KeyPadforIKEv2'), signed_octets_R)
+	pl_resp = <ID_resp, auth_resp, SPIr2, 'ppk_identity'>
+	encr_resp = senc(pl_resp, SK_er)
+	integ_resp = hmac(pl_resp, SK_ar)
+
+	msg4 = <SPI_init, SPI_resp, 'IKE_AUTH', 'msg2', 'flag_r', encr_resp, integ_resp>
+
+	/*
+	* Keys for Child SA
+	*/
+	generatedKeyMat2 = <SK_d, <n_init, n_resp>> 
+
+	SK_d_2 = h(select(generatedKeyMat2, 'd'))
+	SK_ai_2 = h(select(generatedKeyMat2, 'ai'))
+	SK_ar_2 = h(select(generatedKeyMat2, 'ar'))
+	SK_ei_2 = h(select(generatedKeyMat2, 'ei'))
+	SK_er_2 = h(select(generatedKeyMat2, 'er'))
+
+	Keys2 = <SK_d_2, SK_ai_2, SK_ar_2, SK_ei_2, SK_er_2>
+in
+	[ In(msg4)
+	, TempSecurityAssociation('initiator', $I, $R, 'SA1', SPI_init, SPI_resp, generatedKey, Keys)
+	, StateAuthI($I, $R, ID_init, generatedKey, Keys, msg1, msg2, SPIi2,  n_init, n_resp)
+	, !Init_PSK($I, $R, ID_init, ID_resp, psk)
+	, !Init_PPK($I, $R, id_ppk, ppk)
+	, !Agent($I, ID_init)
+	]
+	--[ 
+		IKE_SA_CompletedI(SPI_init, SPI_resp, $I, $R, Keys)
+		, IKE_SA_CompletedTightI(SPI_init, SPI_resp, n_init, n_resp,  $I, $R, Keys)
+		, IKE_ChildSA_InitialI(SPIi2, SPIr2, $I, $R, Keys2)
+		, KeysMade($I, $R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr)
+		, NewKeysMade($I, $R, SK_d_2, SK_ai_2, SK_ar_2, SK_ei_2, SK_er_2)
+	  ]->
+	[ 
+	!SecurityAssociation('initiator', 'original', $I, $R, SPI_init, SPI_resp, generatedKey, Keys)
+	, !ChildSecurityAssociation('initiator', 'original', $I, $R, SPIi2, SPIr2, generatedKeyMat2, Keys2)
+	, ICanCreateChild($I, $R, Keys ,SPI_init, SPI_resp)
+	, ICanRekey($I, $R, Keys)
+	]
+ 
+/*******************************************************
+======== Create Child Before Rekey =========
+*******************************************************/
+
+rule IKE_CREATE_CHILD_SA_INIT: // create a child SA from 1.3.1 of RFC 7296
+	let
+
+	Keys = <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+	
+	childKEi = 'g'^~child_e_init
+	pl_init = <'CREATE_CHILD_REQUEST', ~child_spi_init, ~child_ni, childKEi>
+	encr_init = senc(pl_init, SK_ei)
+	integ_init = hmac(pl_init, SK_ai)
+
+	msg5 = <SPI_init, SPI_resp, 'CREATE_CHILD_REQUEST', 'msg3', 'flag_i', encr_init , integ_init>
+		
+	in
+	/*
+	* HDR, SK{SA, Ni, [KEi, ] TSi, TSr}
+	*/
+	[!SecurityAssociation('initiator', 'original', $I, $R, SPI_init, SPI_resp, generatedKey, Keys)
+	, Fr(~child_ni)	
+	, Fr(~child_spi_init)
+	, Fr(~child_e_init)
+	, ICanCreateChild($I, $R, Keys ,SPI_init, SPI_resp)]
+	--[
+		ChildRequestI($I, $R, SPI_init, SPI_resp, SK_ei, SK_ai, ~child_spi_init)
+		, CreateChildAliveness($I)
+	]->
+	[Out(msg5), 
+	IChildSARequest($I, $R, ~child_spi_init, ~child_ni, ~child_e_init)
+	, !DHtoReveal($I, ~child_e_init)]
+
+rule IKE_CREATE_CHILD_SA_RESP: // create a child SA from 1.3.1 of RFC 7296
+let
+	Keys = <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+
+	pl_init = <'CREATE_CHILD_REQUEST', child_spi_init, child_ni, KEi>
+	encr_init = senc(pl_init, SK_ei)
+	integ_init = hmac(pl_init, SK_ai)
+
+	msg5 = <SPI_init, SPI_resp, 'CREATE_CHILD_REQUEST', 'msg3', 'flag_i', encr_init , integ_init>
+
+	KEr = 'g'^~child_e_resp
+	pl_resp = <'CREATE_CHILD_RESPONSE', ~child_spi_resp, ~child_nr, KEr >
+	encr_resp = senc(pl_resp, SK_er)
+	integ_resp = hmac(pl_resp, SK_ar)
+
+	msg6 = <SPI_init, SPI_resp, 'CREATE_CHILD_RESPONSE', 'msg3', 'flag_r', encr_resp , integ_resp>
+	
+	k = KEi^~child_e_resp
+	childKeyMat = <SK_d, <k, child_ni, ~child_nr>> 
+
+	SK_d_2 = h(select(childKeyMat, 'd'))
+	SK_ai_2 = h(select(childKeyMat, 'ai'))
+	SK_ar_2 = h(select(childKeyMat, 'ar'))
+	SK_ei_2 = h(select(childKeyMat, 'ei'))
+	SK_er_2 = h(select(childKeyMat, 'er'))
+
+	ChildKeys = <SK_d_2, SK_ai_2, SK_ar_2, SK_ei_2, SK_er_2>
+in
+	/*
+	* HDR, SK{SA, Nr, [KEr, ] TSi, TSr}
+	*/
+	[In(msg5)
+	, !SecurityAssociation('responder', 'original', $I, $R, SPI_init, SPI_resp, generatedKey, Keys)
+	, Fr(~child_spi_resp)
+	, Fr(~child_nr)
+	, Fr(~child_e_resp)
+	, RCanCreateChild($I, $R, generatedKey, SPI_init, SPI_resp)]
+	--[
+		CreateChildSAR_Aliveness($I, $R, msg5, child_spi_init, ~child_spi_resp, ChildKeys),
+		CreateChildSAR($I, $R, SPI_init, SPI_resp, SK_ei, SK_ai, SK_er, SK_ar, child_spi_init, ~child_spi_resp, ChildKeys)
+		, CreateChildAliveness($R)
+		, NewKeysMade($I, $R, SK_d_2, SK_ai_2, SK_ar_2, SK_ei_2, SK_er_2)
+		, IKE_ChildSA_R(child_spi_init, ~child_spi_resp, child_ni, ~child_nr, $I, $R, ChildKeys)
+	]->
+	[Out(msg6)
+	, !ChildSecurityAssociation('responder', 'new', $I, $R, child_spi_init, ~child_spi_resp, childKeyMat, ChildKeys)
+	, !DHtoReveal($R, ~child_e_resp)]
+
+rule IKE_CREATE_CHILD_SA_INIT_COMPLETE: // create a child SA from 1.3.1 of RFC 7296
+let
+	Keys = <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+
+	pl_resp = <'CREATE_CHILD_RESPONSE', child_spi_resp, child_nr, KEr >
+	encr_resp = senc(pl_resp, SK_er)
+	integ_resp = hmac(pl_resp, SK_ar)
+
+	msg6 = <SPI_init, SPI_resp, 'CREATE_CHILD_RESPONSE', 'msg3', 'flag_r', encr_resp , integ_resp>
+
+	k = KEr^child_e_init
+	childKeyMat = <SK_d, <k, child_ni, child_nr>> 
+
+	SK_d_2 = h(select(childKeyMat, 'd'))
+	SK_ai_2 = h(select(childKeyMat, 'ai'))
+	SK_ar_2 = h(select(childKeyMat, 'ar'))
+	SK_ei_2 = h(select(childKeyMat, 'ei'))
+	SK_er_2 = h(select(childKeyMat, 'er'))
+
+	ChildKeys = <SK_d_2, SK_ai_2, SK_ar_2, SK_ei_2, SK_er_2>
+in
+	/*
+	* HDR, SK{SA, Nr, [KEr, ] TSi, TSr}
+	*/
+	[In(msg6)
+	,!SecurityAssociation('initiator', 'original', $I, $R, SPI_init, SPI_resp, generatedKey, Keys)
+	, IChildSARequest($I, $R, child_spi_init, child_ni, child_e_init)]
+	--[
+		CreateChildSAI($I, $R, SPI_init, SPI_resp, SK_ei, SK_ai, SK_er, SK_ar, child_spi_init, child_spi_resp, ChildKeys)
+		, NewKeysMade($I, $R, SK_d_2, SK_ai_2, SK_ar_2, SK_ei_2, SK_er_2)
+		, IKE_ChildSA_I(child_spi_init, child_spi_resp, child_ni, child_nr, $I, $R, ChildKeys)
+	]->
+	[!ChildSecurityAssociation('initiator', 'new', $I, $R, child_spi_init, child_spi_resp, childKeyMat, ChildKeys)]
+
+
+/*******************************************************
+============= Rekey SA ==============
+*******************************************************/
+
+rule IKE_REKEY_SA_INIT: // using request for REKEY_SA_Ing an IKE SA from 1.3.2 of RFC 7296
+let 	
+	Keys = <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+
+	KEi_rekey = 'g'^~e_init
+	pl_init = <'REKEY_REQUEST', ~newSPI_init, ~n_init, KEi_rekey>
+	encr_init = senc(pl_init, SK_ei)
+	integ_init = hmac(pl_init, SK_ai)
+	msg7 = <SPI_init, SPI_resp, 'REKEY_SA', 'msg4', 'flag_i', encr_init, integ_init>	
+in
+	[
+	!SecurityAssociation('initiator', 'original', $I, $R, SPI_init, SPI_resp, generatedKey, Keys)
+	, ICanRekey($I, $R, Keys)
+	, Fr(~n_init)	
+	, Fr(~e_init)
+	, Fr(~newSPI_init)
+	]
+	--[
+		REKEY_Aliveness($I)
+		, REKEY_RequestI($I, $R, Keys, ~newSPI_init, ~n_init) 
+	]->
+	[
+	REKEY_SA_RequestI($I, $R, ~n_init,  Keys, ~e_init, ~newSPI_init)
+	, Out(msg7) 		/* HDR, SK{SA, Ni, KEi} cf sec 2.18*/
+	, !DHtoReveal($I, ~e_init)
+	]
+
+
+
+rule IKE_REKEY_SA_RESP:  
+let 	
+
+	Keys = <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+
+	pl_init = <'REKEY_REQUEST', newSPI_init, n_init, KEi_rekey>
+	encr_init = senc(pl_init, SK_ei)
+	integ_init = hmac(pl_init, SK_ai)
+	msg7 = <SPI_init, SPI_resp, 'REKEY_SA', 'msg4', 'flag_i', encr_init, integ_init>	
+
+	KEr_rekey = 'g'^~e_resp
+	pl_resp = <'REKEY_RESPONSE', ~newSPI_resp,  ~n_resp, KEr_rekey>
+	encr_resp = senc(pl_resp, SK_er)
+	integ_resp = hmac(pl_resp, SK_ar)
+	msg8 = <SPI_init, SPI_resp, 'REKEY_SA', 'msg4', 'flag_r', encr_resp, integ_resp>	
+	
+	k = KEi_rekey^~e_resp
+	newSKEYSEED = h(SK_d, <k, n_init, ~n_resp>) 
+	newS = <n_init, ~n_resp, newSPI_init, ~newSPI_resp>
+
+	newGeneratedKey = <newSKEYSEED, newS>
+	
+	newSK_d = h(select(newGeneratedKey , 'd'))
+	newSK_ai = h(select(newGeneratedKey , 'ai'))
+	newSK_ar = h(select(newGeneratedKey , 'ar'))
+	newSK_ei = h(select(newGeneratedKey , 'ei'))
+	newSK_er = h(select(newGeneratedKey , 'er'))
+
+	newKeys = <newSK_d, newSK_ai, newSK_ar, newSK_ei, newSK_er>
+
+in
+	[ 
+	In(msg7)
+	, !SecurityAssociation('responder', 'original', $I, $R, SPI_init, SPI_resp, generatedKey, Keys)
+	, RCanRekey($I, $R, Keys)
+	, Fr(~n_resp)	
+	, Fr(~e_resp)
+	, Fr(~newSPI_resp)
+	]
+	--[ 
+		REKEY_SA_CompleteR($I, $R, Keys, newKeys, newSPI_init, ~newSPI_resp, n_init, ~n_resp )
+		, REKEY_Aliveness($R)	
+		, NewKeysMade($I, $R, newSK_d, newSK_ai, newSK_ar, newSK_ei, newSK_er)
+	]->
+	/* HDR, SK{SA, Ni, KEr}*/
+	[
+	Out(msg8)
+	, !DHtoReveal($R, ~e_resp)
+ 	, !RekeyedSecurityAssociation('responder', 'rekeyed', $I, $R, newSPI_init, ~newSPI_resp, newGeneratedKey, newKeys)]  
+ 
+rule IKE_REKEY_SA_COMPLETE_INIT:
+let 
+
+	Keys = <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+
+	pl_resp = <'REKEY_RESPONSE', newSPI_resp, n_resp, KEr_rekey>
+	encr_resp = senc(pl_resp, SK_er)
+	integ_resp = hmac(pl_resp, SK_ar)
+	msg8 = <SPI_init, SPI_resp, 'REKEY_SA', 'msg4', 'flag_r', encr_resp, integ_resp>	
+
+	k = KEr_rekey^e_init
+	newSKEYSEED = h(SK_d, <k, n_init, n_resp>) 
+	newS = <n_init, n_resp, newSPI_init, newSPI_resp>
+
+	newGeneratedKey = <newSKEYSEED, newS>
+	
+	newSK_d = h(select(newGeneratedKey , 'd'))
+	newSK_ai = h(select(newGeneratedKey , 'ai'))
+	newSK_ar = h(select(newGeneratedKey , 'ar'))
+	newSK_ei = h(select(newGeneratedKey , 'ei'))
+	newSK_er = h(select(newGeneratedKey , 'er'))
+
+
+	newKeys = <newSK_d, newSK_ai, newSK_ar, newSK_ei, newSK_er>
+in
+	[!SecurityAssociation('initiator', 'original', $I, $R, SPI_init, SPI_resp, generatedKey, Keys)
+	, In(msg8)
+	, REKEY_SA_RequestI($I, $R, n_init, Keys, e_init, newSPI_init)
+	]
+	--[
+		REKEY_SA_CompleteI($I, $R, Keys, newKeys, newSPI_init, newSPI_resp, n_init, n_resp )
+		, NewKeysMade($I, $R, newSK_d, newSK_ai, newSK_ar, newSK_ei, newSK_er)
+	]->
+	[!RekeyedSecurityAssociation('initiator', 'rekeyed', $I, $R, newSPI_init, newSPI_resp, newGeneratedKey, newKeys)]
+
+
+
+
+/*************************************************************************************************************
+============================= LEMMAS  ==============================
+*************************************************************************************************************/
+ 
+/*******************************************************
+========= Lemmas: SECRECY =============
+*******************************************************/
+/*
+==============================================================================
+summary of summaries:
+  secrecy_IR_keys_SK_d (all-traces): verified (15 steps)
+  secrecy_IR_keys_SK_ai (all-traces): falsified - found trace (23 steps)
+  secrecy_IR_keys_SK_ar (all-traces): falsified - found trace (23 steps)
+  secrecy_IR_keys_SK_ei (all-traces): falsified - found trace (23 steps)
+  secrecy_IR_keys_SK_er (all-traces): falsified - found trace (23 steps)
+  secrecy_IR_keys_SK_pi (all-traces): verified (15 steps)
+  secrecy_IR_keys_SK_pr (all-traces): verified (15 steps)
+  secrecy_IR_new_keys_SK_d (all-traces): verified (2145 steps)
+  secrecy_IR_new_keys_SK_ai (all-traces): verified (2145 steps)
+  secrecy_IR_new_keys_SK_ar (all-traces): verified (2145 steps)
+  secrecy_IR_new_keys_SK_ei (all-traces): verified (2145 steps)
+  secrecy_IR_new_keys_SK_er (all-traces): verified (2145 steps)
+==============================================================================
+*/
+
+// Check the secrecy of the seven keys of the IKE_SA individually.
+// The first seven are for the IKE SA exchange ONLY (no child keys or rekeying)
+
+lemma secrecy_IR_keys_SK_d:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+	KeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr) @#i
+	==> not(Ex #j. K(SK_d)@#j)"
+
+lemma secrecy_IR_keys_SK_ai:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+	KeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr) @#i
+	==> not(Ex #j. K(SK_ai)@#j)"
+
+lemma secrecy_IR_keys_SK_ar:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+	KeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr) @#i
+	==> not(Ex #j. K(SK_ar)@#j)"
+
+lemma secrecy_IR_keys_SK_ei:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+	KeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr) @#i
+	==> not(Ex #j. K(SK_er)@#j)"
+
+lemma secrecy_IR_keys_SK_er:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+	KeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr) @#i
+	==> not(Ex #j. K(SK_er)@#j)"
+
+lemma secrecy_IR_keys_SK_pi:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+	KeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr) @#i
+	==> not(Ex #j. K(SK_pi)@#j)"
+
+lemma secrecy_IR_keys_SK_pr:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+	KeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr) @#i
+	==> not(Ex #j. K(SK_d)@#j)"
+
+
+
+// The following lemmas pertain to keys created for Child SAs (i.e. not the SA used for IKE traffic)
+
+lemma secrecy_IR_new_keys_SK_d:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er #i.
+	NewKeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @#i
+	==> not(Ex #j. K(SK_d)@#j)"
+
+lemma secrecy_IR_new_keys_SK_ai:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er #i.
+	NewKeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @#i
+	==> not(Ex #j. K(SK_ai)@#j)"
+
+lemma secrecy_IR_new_keys_SK_ar:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er  #i.
+	NewKeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @#i
+	==> not(Ex #j. K(SK_ar)@#j)"
+
+lemma secrecy_IR_new_keys_SK_ei:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er  #i.
+	NewKeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @#i
+	==> not(Ex #j. K(SK_er)@#j)"
+
+lemma secrecy_IR_new_keys_SK_er:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er  #i.
+	NewKeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @#i
+	==> not(Ex #j. K(SK_er)@#j)"
+
+
+/*******************************************************
+========= Lemmas: IKE_SA =============
+*******************************************************/
+
+/*
+==============================================================================
+summary of summaries:
+  IKE_SA_existence (exists-trace): verified (21 steps)
+  IKE_SA_aliveness_I (all-traces): verified (11 steps)
+  IKE_SA_aliveness_R (all-traces): verified (10 steps)
+  IKE_SA_weak_agreement_I (all-traces): verified (28 steps)
+  IKE_SA_weak_agreement_R (all-traces): verified (20 steps)
+  IKE_SA_non_injective_agreement_I (all-traces): verified (116 steps)
+  IKE_SA_non_injective_agreement_R (all-traces): verified (161 steps)
+  IKE_SA_injective_agreement_I (all-traces): verified (41 steps)
+  IKE_SA_injective_agreement_I_v2 (all-traces): verified (132 steps)
+  IKE_SA_injective_agreement_R (all-traces): verified (38 steps)
+  IKE_SA_injective_agreement_R_v2 (all-traces): verified (179 steps)
+==============================================================================
+*/
+
+lemma IKE_SA_existence: exists-trace
+    "Ex spiI spiR nI nR I R Keys #i #j.
+	IKE_SA_CompletedTightR(spiI, spiR, nI, nR,  I, R, Keys) @#i
+	& IKE_SA_CompletedTightI(spiI, spiR, nI, nR, I, R, Keys) @#j
+	& #i<#j"
+
+lemma IKE_SA_aliveness_I: //I completes and R is alive
+    "All spiI spiR nI nR I R Keys #i .
+	IKE_SA_CompletedTightI(spiI, spiR, nI, nR,  I, R, Keys) @#i
+	==> Ex #j. IKE_SA_Aliveness(R) @#j & #j<#i"
+
+lemma IKE_SA_aliveness_R: //R completes and I is alive
+    "All spiI spiR nI nR I R Keys #i .
+	IKE_SA_CompletedTightR(spiI, spiR, nI, nR,  I, R, Keys) @#i
+	==> Ex #j. IKE_SA_Aliveness(I) @#j & #j<#i"
+
+
+lemma IKE_SA_weak_agreement_I[use_induction ]: // pertains to AUTH payload from initiator's perspective
+    "All spiI spiR nI nR I R Keys #i .
+	IKE_SA_CompletedTightI(spiI, spiR, nI, nR,  I, R, Keys) @#i
+	    ==> (Ex spiI2 spiR2 nI2 nR2 I R Keys2 #j .
+	IKE_SA_CompletedTightR(spiI2, spiR2, nI2, nR2, I, R, Keys2) @ #j
+        & #j < #i)"
+
+lemma IKE_SA_weak_agreement_R[use_induction]: // AUTH payload weak agreeement after responder has completed
+    "All spiI spiR nI nR I R Keys #i .
+	IKE_SA_CompletedTightR(spiI, spiR, nI, nR, I, R, Keys) @#i
+    ==> (Ex spiI2 spiR2 ni2 nr2 Keys2 #j . IKE_SA_WeakAgreementI(spiI2, spiR2, ni2, nr2, I, R, Keys2) @ #j
+        & #j < #i)"
+
+lemma IKE_SA_non_injective_agreement_I [use_induction]: 
+    "All spiI spiR nI nR I R Keys #i .
+	IKE_SA_CompletedTightI(spiI, spiR, nI, nR,  I, R, Keys) @#i
+    ==> (Ex #j . IKE_SA_CompletedTightR(spiI, spiR, nI, nR,  I, R, Keys) @ #j
+        & #j < #i)"
+
+lemma IKE_SA_non_injective_agreement_R[use_induction]: 
+    "All spiI spiR nI nR I R Keys #i .
+	IKE_SA_CompletedTightR(spiI, spiR, nI, nR,  I, R, Keys) @#i
+    ==> (Ex #j . IKE_SA_WeakAgreementI(spiI, spiR, nI, nR, I, R, Keys) @ #j
+        & #j < #i)"
+
+lemma IKE_SA_injective_agreement_I[use_induction]:
+     "All spiI spiR nI nR I R Keys #i #j #k .
+	IKE_SA_CompletedTightI(spiI, spiR, nI, nR, I, R, Keys) @#i
+ 	& IKE_SA_CompletedTightR(spiI, spiR, nI, nR, I, R, Keys) @ #j
+    	& #j < #i // the legitimate #unique run
+	& IKE_SA_CompletedTightR(spiI, spiR, nI, nR, I, R, Keys) @ #k // the additional run
+    ==> #j = #k"
+
+lemma IKE_SA_injective_agreement_I_v2:
+     "All spiI spiR nI nR I R Keys #i.
+	IKE_SA_CompletedTightI(spiI, spiR, nI, nR, I, R, Keys) @#i
+    ==> (Ex #j. IKE_SA_CompletedTightR(spiI, spiR, nI, nR, I, R, Keys) @ #j
+        & j < i
+        & not (Ex A2 B2 #i2. IKE_SA_CompletedTightI(spiI, spiR, nI, nR, A2, B2, Keys) @ #i2
+                           & not (#i2 = #i)))"
+
+
+lemma IKE_SA_injective_agreement_R[use_induction]:
+     "All spiI spiR nI nR I R Keys #i #j #k. 
+        IKE_SA_CompletedTightR(spiI, spiR, nI, nR, I, R, Keys) @#i
+        & IKE_SA_WeakAgreementI(spiI, spiR, nI, nR, I, R, Keys) @ #j
+        & #j < #i
+        & IKE_SA_WeakAgreementI(spiI, spiR, nI, nR, I, R, Keys) @ #k
+        ==> #j = #k"
+
+lemma IKE_SA_injective_agreement_R_v2:
+     "All spiI spiR nI nR I R Keys #i.
+	IKE_SA_CompletedTightR(spiI, spiR, nI, nR, I, R, Keys) @#i
+    ==> (Ex #j. IKE_SA_WeakAgreementI(spiI, spiR, nI, nR, I, R, Keys) @ #j
+        & #j < #i
+        & not (Ex spiI1 spiR1 nI1 nR1 I1 R1 #i2. IKE_SA_WeakAgreementI(spiI1, spiR1, nI1, nR1, I1, R1, Keys)@ #i2
+                           & not (#i2 = #j)))"
+
+
+/*******************************************************
+======= Lemmas: IKE Initial Child ==========
+*******************************************************/
+
+/*
+==============================================================================
+  InitialChild_existence (exists-trace): verified (21 steps)
+  InitialChild_aliveness_I (all-traces): verified (29 steps)
+  InitialChild_aliveness_R (all-traces): verified (14 steps)
+  InitialChild_weak_agreement_I (all-traces): verified (116 steps)
+  InitialChild_weak_agreement_R (all-traces): verified (20 steps)
+  Initial_child_non_injective_agreement_I_partial (all-traces): verified (116 steps)
+  Initial_child_non_injective_agreement_R_partial (all-traces): verified (161 steps)
+  Initial_child_non_injective_agreement_I_counterexample (exists-trace): verified (45 steps)
+  Initial_child_non_injective_agreement_I_counterexample2 (exists-trace): verified (58 steps)
+  Initial_child_non_injective_agreement_R_counterexample (exists-trace): verified (43 steps)
+  Initial_child_injective_agreement_I_partial (all-traces): verified (159 steps)
+  Initial_child_injective_agreement_R_partial (all-traces): verified (203 steps)
+==============================================================================
+*/
+
+
+lemma InitialChild_existence: exists-trace
+    "Ex spiI spiR I R keys #i #j. IKE_ChildSA_InitialR(spiI, spiR, I, R ,keys)@#j 
+	& IKE_ChildSA_InitialI(spiI, spiR, I, R ,keys)@#i 
+	& #j<#i"
+
+lemma InitialChild_aliveness_I [use_induction]: // the initiator completes the Child SA from the AUTH exchange and the responder is alive
+  "All spiI spiR I R keys #i. IKE_ChildSA_InitialI(spiI, spiR, I, R,keys)@#i
+	==> (Ex spiI1 spiR1 I1 keys1 #j. IKE_ChildSA_InitialI(spiI1, spiR1, R, I1 ,keys1)@#j &#j<#i)
+	      |(Ex spiI1 spiR1 I1 keys1 #j. IKE_ChildSA_InitialR(spiI1, spiR1, I1, R, keys1)@#j & #j < #i)"
+
+lemma InitialChild_aliveness_R [use_induction]: // the responder completes the Child SA from the AUTH exchange and the initiator is alive
+    "All spiI spiR I R keys #i. IKE_ChildSA_InitialR(spiI, spiR, I, R,keys)@#i 
+	==> Ex #j. IKE_SA_Aliveness(I)@#j &#j<#i "
+
+lemma InitialChild_weak_agreement_I [use_induction]: // the initiator completes the Child SA from the AUTH exchange and the responder is alive
+    "All spiI spiR  I R keys #i. IKE_ChildSA_InitialI(spiI, spiR, I, R,keys)@#i
+	==> Ex spiI1 spiR1 keys1 #j.  IKE_ChildSA_InitialR(spiI1, spiR1, I, R, keys1)@#j
+		& #j < #i"
+
+lemma InitialChild_weak_agreement_R [use_induction]: // the initiator completes the Child SA from the AUTH exchange and the responder is alive
+    "All spiI spiR  I R keys #i. IKE_ChildSA_InitialR(spiI, spiR, I, R,keys)@#i
+	==> Ex spiI1 keys1 #j . IKE_SA_InitialChildPriorI(spiI1, I, R, keys1) @#j
+		& #j < #i"
+
+lemma Initial_child_non_injective_agreement_I_partial [use_induction]: 
+    "All spiI spiR I R keys #i .
+	IKE_ChildSA_InitialI(spiI, spiR, I, R, keys) @#i
+    ==> (Ex spiI1 spiR1 #j . IKE_ChildSA_InitialR(spiI1, spiR1, I, R, keys) @ #j
+        & #j < #i)"
+
+lemma Initial_child_non_injective_agreement_R_partial [use_induction]: 
+    "All spiI spiR I R keys #i .
+	IKE_ChildSA_InitialR(spiI, spiR, I, R, keys) @#i
+    ==> (Ex spiI1 #j . IKE_SA_InitialChildPriorI(spiI1, I, R, keys) @ #j
+        & #j < #i)"
+
+lemma Initial_child_non_injective_agreement_I_counterexample: // counterexample to non-injective agreeement for I. I and R can agree an initial child with the same key but different SPIs
+exists-trace
+"Ex spiI spiI1 spiR I R keys #i #j.
+	IKE_ChildSA_InitialI(spiI, spiR, I, R, keys) @#i
+	& IKE_ChildSA_InitialR(spiI1, spiR, I, R, keys) @ #j
+	& #j < #i
+	& not(spiI = spiI1)"
+
+lemma Initial_child_non_injective_agreement_I_counterexample2: // counterexample to non-injective agreeement for I. I and R can agree an initial child with the same key but different SPIs
+exists-trace
+"Ex spiI spiR spiI1 spiR1 I R keys #i #j.
+	IKE_ChildSA_InitialI(spiI, spiR, I, R, keys) @#i
+	& IKE_ChildSA_InitialR(spiI1, spiR1, I, R, keys)@ #j
+	& #j < #i
+	& not(spiI = spiI1)
+	& not(spiR = spiR1)"
+
+lemma Initial_child_non_injective_agreement_R_counterexample: // counterexample to non-injective agreeement for I. I and R can agree an initial child with the same key but different SPIs
+exists-trace
+"Ex spiI spiR spiI1 I R keys #i #j #k1 #k2.
+	IKE_ChildSA_InitialR(spiI, spiR, I, R, keys) @#i 
+	& IKE_SA_InitialChildPriorI(spiI1, I, R, keys) @ #j
+	& #j < #i
+	&K(spiI) @#k1
+	&K(spiI1) @#k2
+	& not(spiI1 = spiI)"
+
+
+lemma Initial_child_injective_agreement_I_partial [use_induction]: 
+    "All spiI spiR I R Key #i .
+	IKE_ChildSA_InitialI(spiI, spiR, I, R, Key) @#i
+    ==> (Ex spiI1 spiR1 #j . IKE_ChildSA_InitialR(spiI1, spiR1, I, R, Key) @ #j
+        & #j < #i 
+        & not(Ex I1 R1 spiI2 spiR2 #l. IKE_ChildSA_InitialR(spiI2, spiR2, I1, R1, Key) @ #l & not(#l = #j))
+)"
+
+lemma Initial_child_injective_agreement_R_partial [use_induction]: 
+    "All spiI spiR I R Key #i .
+	IKE_ChildSA_InitialR(spiI, spiR, I, R, Key) @#i
+    ==> (Ex spiI1 #j . IKE_SA_InitialChildPriorI(spiI1, I, R, Key) @ #j
+        & #j < #i
+        & not(Ex I1 R1 spiI2 #l. IKE_SA_InitialChildPriorI(spiI2, I1, R1, Key) @ #l & not(#l = #j)))"
+
+
+
+/*******************************************************
+======== Lemmas: Create Child SA =========
+*******************************************************/
+
+/*==============================================================================
+summary of summaries:
+  CreateChild_exists (exists-trace): verified (29 steps)
+  CreateChild_aliveness_I_CP (exists-trace): verified (31 steps)
+  CreateChild_aliveness_R_CP (exists-trace): verified (26 steps)
+==============================================================================*/
+
+lemma CreateChild_exists: exists-trace
+    "Ex spiI spiR newspiI newspiR nI nR I R kD kAi kAr kEi kEr kPi kPr childKeys #i1 #i2 #j1 #j2.
+	IKE_SA_CompletedTightR(spiI, spiR, nI, nR,  I, R, <kD, kAi, kAr, kEi, kEr, kPi, kPr>) @#i1
+	& IKE_SA_CompletedTightI(spiI, spiR, nI, nR, I, R, <kD, kAi, kAr, kEi, kEr, kPi, kPr>) @#i2
+	& #i1<#i2
+	& CreateChildSAR(I, R, spiI, spiR, kEi, kAi, kEr, kAr, newspiI, newspiR, childKeys) @ #j1
+	& CreateChildSAI(I, R, spiI, spiR, kEi, kAi, kEr, kAr, newspiI, newspiR, childKeys) @ #j2
+	& #i2<#j1 & #j1< #j2"
+
+
+// Testing aliveness via contrapositive: there is a way for the initiator to create a Child_SA, without the responder ever being involved in the Create Child process
+// verification of lemma => aliveness fails
+
+lemma CreateChild_aliveness_I_CP:
+exists-trace
+    "Ex spiI spiR newspiI newspiR nI nR I R kD kAi kAr kEi kEr kPi kPr childKeys #i #j1 #j2.
+	 IKE_SA_CompletedTightI(spiI, spiR, nI, nR, I, R, <kD, kAi, kAr, kEi, kEr, kPi, kPr>) @#i 
+	& ChildRequestI(I, R, spiI, spiR, kEi, kAi, newspiI) @ #j1 // this step is included to help the model terminate
+	& CreateChildSAI(I, R, spiI, spiR, kEi, kAi, kEr, kAr, newspiI, newspiR, childKeys) @ #j2
+	& #i<#j1 & #j1< #j2
+	& not(Ex #j3. CreateChildAliveness(R) @#j3 &#j3<#j2)"
+/*
+Model comment: One would expect to see IKE_SA_CompletedTightR feature here (with relevant parameters). When this is included, we find that the proof does not terminate in a reasonable length of time (a couple of hours). 
+However, an inspection of the trace in the interactive prover demonstrates that IKE_SA_CompletedTightR is created as expected. 
+*/
+
+
+lemma CreateChild_aliveness_R_CP: // the responder creates a new Child SA and the initiator is alive
+exists-trace
+    "Ex spiI spiR newspiI newspiR nI nInew nR  childKEi I R kD kAi kAr kEi kEr kPi kPr childKeys #i #j.
+	IKE_SA_CompletedTightR(spiI, spiR, nI, nR,  I, R, <kD, kAi, kAr, kEi, kEr, kPi, kPr>) @#i
+	& CreateChildSAR_Aliveness(I, R, <spiI, spiR, 'CREATE_CHILD_REQUEST', 'msg3', 'flag_i', senc(<'CREATE_CHILD_REQUEST', newspiI, nInew, childKEi>, kEi) , hmac(<'CREATE_CHILD_REQUEST', newspiI, nInew, childKEi>, kAi)> , newspiI , newspiR, childKeys) @#j
+	& #i<#j
+	& not(Ex #j0. CreateChildAliveness(I) @#j0 & #i<#j0  &#j0<#j)"
+/*
+Model comment: Similarly, one would expect to see IKE_SA_CompletedTightI feature here (with relevant parameters). When this is included, we find that the proof does not terminate in a reasonable length of time (a couple of hours). 
+This time, the trace does not feature IKE_SA_CompletedTightI -- this is because the initiator does not actuallly need to complete their SA for the adversary to persuade R to create a child.
+*/
+
+/*******************************************************
+========= Lemmas: Rekey SA ============
+*******************************************************/
+
+/*
+==============================================================================
+summary of summaries:
+  Rekey_exists (exists-trace): verified (20 steps)
+  Rekey_aliveness_I (all-traces): falsified - found trace (26 steps)
+  Rekey_aliveness_R (all-traces): falsified - found trace (24 steps)
+==============================================================================
+*/
+
+lemma Rekey_exists: exists-trace
+    "Ex I R Keys newKeys spiI spiR ni nr #i #j. 
+	REKEY_SA_CompleteR(I, R, Keys, newKeys, spiI, spiR, ni, nr) @#i
+	& REKEY_SA_CompleteI(I, R, Keys, newKeys, spiI, spiR, ni, nr) @#j"
+
+
+// the initiator completes and the responder is alive
+lemma Rekey_aliveness_I [use_induction]:
+    "All I R Keys newKeys spiI spiR ni nr #i. REKEY_SA_CompleteI(I, R, Keys, newKeys, spiI, spiR, ni, nr)  @#i 
+	==> Ex #j. REKEY_Aliveness(R)@#j & #j<#i "
+
+//the responder completes, and the initiator is alive
+lemma Rekey_aliveness_R [use_induction]: 
+    "All I R Keys newKeys spiI spiR ni nr #i. REKEY_SA_CompleteR(I, R, Keys, newKeys, spiI, spiR, ni, nr)  @#i 
+	==> Ex #j. REKEY_Aliveness(I)@#j & #j<#i"
+
+
+lemma Rekey_non_inj_I [use_induction]:
+    "All I R Keys newKeys spiI spiR ni nr #i. REKEY_SA_CompleteI(I, R, Keys, newKeys, spiI, spiR, ni, nr)  @#i 
+	==> Ex #j. REKEY_SA_CompleteR(I, R, Keys, newKeys, spiI, spiR, ni, nr) @#j & #j<#i "
+
+lemma Rekey_non_inj_R [use_induction]:
+    "All I R Keys newKeys spiI spiR ni nr #i. REKEY_SA_CompleteR(I, R, Keys, newKeys, spiI, spiR, ni, nr)  @#i 
+	==> Ex #j. REKEY_RequestI(I, R, Keys, spiI, ni)  @#j & #j<#i "
+
+lemma Rekey_inj_I [use_induction]:
+    "All I R Keys newKeys spiI spiR ni nr #i #j. 
+	REKEY_SA_CompleteI(I, R, Keys, newKeys, spiI, spiR, ni, nr)  @#i 
+	& REKEY_SA_CompleteR(I, R, Keys, newKeys, spiI, spiR, ni, nr) @#j & #j<#i 
+	==>not (Ex #k. REKEY_SA_CompleteR(I, R, Keys, newKeys, spiI, spiR, ni, nr) @#k & #k<#i & not(#k=#j))"
+
+
+lemma Rekey_inj_R [use_induction]:
+    "All I R Keys newKeys spiI spiR ni nr #i #j. 
+	REKEY_SA_CompleteR(I, R, Keys, newKeys, spiI, spiR, ni, nr)  @#i 
+	& REKEY_RequestI(I, R, Keys, spiI, ni)  @#j & #j<#i 
+	==> not(Ex #k. REKEY_RequestI(I, R, Keys, spiI, ni)  @#k & #k<#i &not(#k=#j))"
+
+end
