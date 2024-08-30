@@ -1,13 +1,13 @@
 /*
+ * The skeleton of this model is based on:
  * Original Protocol:	IKEv2
  * Original Modeler:	Tobias Heider & Stefan-Lukas Gazdag & Sophia Grundner-Culemann
- * Original Date:	10/2019
- * Original Status:	Done
+ * Original Date:	    10/2019
  *
- * Modified Protocol:	 IKEv2 PPK
- * Modeler:               Sophie Stevens
- * Date:	                1/2023
- * Status:	                Complete
+ * Modified Protocol:	 IKEv2 PPK RFC 8784 extension
+ * Modeler:              Sophie Stevens, Paul D. Rowe, Emily Gray
+ * Date:	             09/2024
+ * Status:	             Complete
 *
 * RFC PPK: https://www.rfc-editor.org/rfc/rfc8784.pdf
 * RFC IKEv2: https://www.rfc-editor.org/rfc/pdfrfc/rfc7296.txt.pdf
@@ -17,7 +17,7 @@
 * **** creating a child SA
 * **** rekeying the initial SA
 *
-* We do not consider rekeying a child SA
+* We do not consider rekeying a Child SA
 *
 */
 
@@ -28,28 +28,27 @@ begin
 builtins: hashing, diffie-hellman, symmetric-encryption
 functions: hmac/2, prf_plus/2, select/2, prf/2
 
-/**********************************
- * Key Reveals as defined in the adversary model
-**********************************/
-
+/**************************************************
+== Key Reveals as defined in the adversary model ==
+***************************************************/
+// Actor I reveals the Diffie-Hellman private value k
 rule reveal_dh:
-	[ !DHtoReveal($I, k) ]
+	[ !DHtoReveal($I, k) ] 
 	--[RevDH($I)]->
 	[ Out(k) ]
 
 /*******************************************************
 ======== IKEv2 Protocol Preliminaries =======
 *******************************************************/
-rule enrol_agent: // give each actor its own ID
+// We an unique ID to Actor A; we assume that the ID is unique to Actor A and that Actor A has only one ID
+rule enrol_agent: 
 	[Fr(~ID)]
-	--[
-		UniqueID($A, ~ID)  // ID does not have to be unique but for simplification we assume that it is
-	]->	
+	--[UniqueID($A, ~ID)]->	
 	[!Agent($A, ~ID)]
 
 
-rule generate_psk: // pre-shared key used for AUTH payload
-// "If  either side uses a shared secret for authentication, the names in the ID payload MUST correspond to the key used to generate the AUTH  payload."
+// Generate the PSK used for the AUTH payload betweed Actor I and Actor R; I and R share a unique PSK 
+rule generate_psk: 
 	[ Fr(~psk), 
 	!Agent($I, ID_init), 
 	!Agent($R, ID_resp)]
@@ -60,26 +59,27 @@ rule generate_psk: // pre-shared key used for AUTH payload
 	[ !Init_PSK($I, $R, ID_init, ID_resp, ~psk)
 	, !Resp_PSK($R, $I,  ID_init, ID_resp, ~psk)]
 
-rule generate_ppk: // pre-positioned postquantum key as per RFC8784
+// Generate the PPK as per RFC 8784; we assume only one PPK between I and R as a model simplification; bijection between ID and PPK 
+rule generate_ppk: 
 	[ Fr(~ppk)
 	, Fr(~id_ppk)]
 	--[
 		GenPPK(~ppk)
-		, UniqueID(~id_ppk, ~ppk) // modelling simplification: we assume only one PPK between initiator and responder
+		, UniqueID(~id_ppk, ~ppk)
 	]->
 	[ !Init_PPK($I, $R, ~id_ppk, ~ppk)
 	, !Resp_PPK($R, $I, ~id_ppk, ~ppk)
 	]
 
-//each ID corresponds to a unique object
+//Restriction: each ID corresponds to a unique object
 restriction UniqueID: 
 	"All ID o1 o2 #i #j. UniqueID(ID, o1)@#i & UniqueID(ID, o2) @#j ==> o1 = o2"
 
-// each object has a unique ID
+// Restriction: each object has a unique ID
 restriction UniqueID2: 
 	"All ID1 ID2 o #i #j. UniqueID(ID1, o )@#i & UniqueID(ID2, o) @#j ==> ID1 = ID2"
 
-// for the purposes of tamarin we assume that the initiator and responder share a single PSK for the AUTH payload
+// Restriction: (modelling simplification) we assume that I and R share a single PSK for the AUTH payload
 restriction UniquePSK: 
 	"All I R psk1 psk2 #i #j. UniquePSK(I, R, psk1)@#i & UniquePSK(I, R, psk2) @#j ==> psk1 = psk2"
 
@@ -87,6 +87,7 @@ restriction UniquePSK:
 /*******************************************************
 ======== IKEv2 Protocol Transitions =========
 *******************************************************/
+// Initiator Hello
 rule IKE_SA_INIT_I:
 let
 	KEi = 'g'^~e_init	//  Initiator DH public share
@@ -107,9 +108,10 @@ in
 	//	HDR, SAi1, KEi, Ni, N(USE_PPK)  		 
 	  Out(msg1)
 	, StateInitI($I, $R, ~SPI_init, ~e_init, ~n_init, msg1)
-	, !DHtoReveal($I, ~e_init) // this will allow a post-quantum adversary to break DH
+	, !DHtoReveal($I, ~e_init) // Postquantum adversary reveals I's private DH key
 	]
 
+// Responder Hello and key generation
 rule IKE_SA_INIT_R:
 let
 	KEr = 'g'^~e_resp	// < Initiator DH public share
@@ -143,6 +145,7 @@ in
 	, !DHtoReveal($R, ~e_resp)]
 
 
+// Initiator sends AUTH and generates keys
 rule IKE_AUTH_I:
 let
 	/*
@@ -214,7 +217,6 @@ in
 	]
 	--[ 
 		IKE_SA_Agreed(<SPI_init, SPI_resp>, $I, 'initiator', <n_init, n_resp>, generatedKey)
-		, AuthCreated($I, $R, auth_init)
 		, IKE_SA_AlivenessAgentB($I, generatedKey) // aliveness of initiator has to come before the aliveness of the responder when it is in the role of agent a
 		, IKE_SA_WeakAgreementI(SPI_init, SPI_resp, n_init, n_resp, $I, $R, generatedKey)
 		, IKE_SA_InitialChildPriorI(~SPIi2, $I, $R, Keys2)
@@ -228,7 +230,7 @@ in
 	, StateAuthI($I, $R, ID_init, generatedKey, Keys, msg1, msg2, ~SPIi2, n_init, n_resp)
 	]
 
- 
+// Responder validates I's AUTH message and sends its own 
 rule IKE_AUTH_R:
 let
 	generatedKey = <SKEYSEED, S>     // this is the pair to remember to generate all keys
@@ -302,9 +304,6 @@ in
 		, IKE_SA_CompletedFullR(SPI_init, SPI_resp, n_init, n_resp,  $I, $R, generatedKey, Keys)
 		, IKE_ChildSA_InitialR(SPIi2, ~SPIr2,   $I, $R, Keys2)
 		, KeysMade($I, $R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr)
-		, IdentityLearnt(ID_resp)
-		, AuthVerified($I, $R, auth_init)
-		, AuthCreated($I, $R, auth_resp)
 		, NewKeysMade($I, $R, SK_d_2, SK_ai_2, SK_ar_2, SK_ei_2, SK_er_2)
 	  ]->
 	[ Out(msg4)
@@ -315,6 +314,7 @@ in
 	]
 
 
+// Initiator validates R's AUTH method
 rule IKE_AUTH_COMPLETE:
 let
 	Keys = <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
@@ -353,8 +353,6 @@ in
 		, IKE_SA_CompletedFullI(SPI_init, SPI_resp, n_init, n_resp,  $I, $R, generatedKey, Keys)
 		, IKE_ChildSA_InitialI(SPIi2, SPIr2, $I, $R, Keys2)
 		, IKE_SA_AlivenessAgentA($I, $R, generatedKey)
-		, AuthVerified($I, $R, auth_resp)
-	                , IdentityLearnt(ID_resp)
 		, KeysMade($I, $R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr)
 		, NewKeysMade($I, $R, SK_d_2, SK_ai_2, SK_ar_2, SK_ei_2, SK_er_2)
 	  ]->
@@ -365,13 +363,18 @@ in
 	, ICanRekey($I, $R, Keys)
 	]
  
+
 /*******************************************************
 ======== Create Child Before Rekey =========
+*
+* In this section, the Initiator sends a request to create 
+* a Child SA prior to sending a Rekey Request
+*
 *******************************************************/
 
-rule IKE_CREATE_CHILD_SA_INIT: // create a child SA from 1.3.1 of RFC 7296
-	let
-
+// Initiator sends a Create Child request (RFC 7296 1.3.1)
+rule IKE_CREATE_CHILD_SA_INIT: 
+let
 	Keys = <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
 	
 	childKEi = 'g'^~child_e_init
@@ -399,7 +402,8 @@ rule IKE_CREATE_CHILD_SA_INIT: // create a child SA from 1.3.1 of RFC 7296
 	, !DHtoReveal($I, ~child_e_init)]
 
 
-rule IKE_CREATE_CHILD_SA_RESP: // create a child SA from 1.3.1 of RFC 7296
+// Responder's response and Child SA completed
+rule IKE_CREATE_CHILD_SA_RESP: 
 let
 	Keys = <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
 
@@ -446,6 +450,7 @@ in
 	, !ChildSecurityAssociation('responder', 'new', $I, $R, child_spi_init, ~child_spi_resp, childKeyMat, ChildKeys)
 	, !DHtoReveal($R, ~child_e_resp)]
 
+// Initiator completes Child SA 
 rule IKE_CREATE_CHILD_SA_INIT_COMPLETE: // create a child SA from 1.3.1 of RFC 7296
 let
 	Keys = <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
@@ -485,7 +490,8 @@ in
 ============= Rekey SA ==============
 *******************************************************/
 
-rule IKE_REKEY_SA_INIT: // using request for REKEY_SA_Ing an IKE SA from 1.3.2 of RFC 7296
+// Initiator instigates Rekey Request (RFC 7296 1.3.2)
+rule IKE_REKEY_SA_INIT: 
 let 	
 	Keys = <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
 
@@ -513,7 +519,7 @@ in
 	]
 
 
-
+// Responder replies and completes Rekey 
 rule IKE_REKEY_SA_RESP:  
 let 	
 
@@ -564,6 +570,7 @@ in
 	, !DHtoReveal($R, ~e_resp)
  	, !RekeyedSecurityAssociation('responder', 'rekeyed', $I, $R, newSPI_init, ~newSPI_resp, newGeneratedKey, newKeys)]  
  
+// Initiator completes Rekey 
 rule IKE_REKEY_SA_COMPLETE_INIT:
 let 
 
@@ -601,13 +608,6 @@ in
 
 
 
-
-
-
-
-
-
-
 /*************************************************************************************************************
 ============================= LEMMAS  ==============================
 *************************************************************************************************************/
@@ -632,40 +632,48 @@ summary of summaries:
 ==============================================================================
 */
 
+// IKE SA completes - sanity check
 lemma IKE_SA_existence: exists-trace
     "Ex spiI spiR nI nR I R Key #i #j.
 	IKE_SA_CompletedTightR(spiI, spiR, nI, nR,  I, R, Key) @#i
 	& IKE_SA_CompletedTightI(spiI, spiR, nI, nR, I, R, Key) @#j
 	& #i<#j"
 
+// In IKE SA exchange, Agent A completes (i.e. generates keys) and Agent B was alive 
+// --- the statement of this lemma is actually stronger than aliveness, as Agent B was alive and also created a set of keys
 lemma IKE_SA_aliveness[use_induction]: // note that this does both aliveness arguments for the AUTH payload exchange
     "All A B keymat #i. IKE_SA_AlivenessAgentA(A, B, keymat) @#i ==> Ex keymat2 #j. IKE_SA_AlivenessAgentB(B, keymat2)@#j & #j < #i"
 
-lemma IKE_SA_weak_agreement_I[use_induction ]: // pertains to AUTH payload from initiator's perspective
+// In IKE SA exchange, if I completes, nominally with R, then R has also completed an IKE SA (nominally with I), although they need not agree on variables
+lemma IKE_SA_weak_agreement_I[use_induction ]:
     "All spiI spiR nI nR I R Key #i .
 	IKE_SA_CompletedTightI(spiI, spiR, nI, nR,  I, R, Key) @#i
 	    ==> (Ex spiI2 spiR2 nI2 nR2 I R Key2 #j .
 	IKE_SA_CompletedTightR(spiI2, spiR2, nI2, nR2, I, R, Key2) @ #j
         & #j < #i)"
 
-lemma IKE_SA_weak_agreement_R[use_induction]: // AUTH payload weak agreeement after responder has completed
+// In IKE SA exchange, if R completes, nominally with I, then I has also completed an IKE SA (nominally with R), although they need not agree on variables
+lemma IKE_SA_weak_agreement_R[use_induction]: 
     "All spiI spiR nI nR I R Key #i .
 	IKE_SA_CompletedTightR(spiI, spiR, nI, nR, I, R, Key) @#i
     ==> (Ex spiI2 spiR2 ni2 nr2 keymat2 #j . IKE_SA_WeakAgreementI(spiI2, spiR2, ni2, nr2, I, R, keymat2) @ #j
         & #j < #i)"
 
+// In IKE SA exchange, if I completes, nominally with R, then R has also completed an IKE SA (nominally with I) and they agree on interim variables
 lemma IKE_SA_non_injective_agreement_I [use_induction]: 
     "All spiI spiR nI nR I R Key #i .
 	IKE_SA_CompletedTightI(spiI, spiR, nI, nR,  I, R, Key) @#i
     ==> (Ex #j . IKE_SA_CompletedTightR(spiI, spiR, nI, nR,  I, R, Key) @ #j
         & #j < #i)"
 
+// In IKE SA exchange, if R completes, nominally with I, then I has also completed an IKE SA (nominally with R) and they agree on interim variables
 lemma IKE_SA_non_injective_agreement_R[use_induction]: 
     "All spiI spiR nI nR I R Key #i .
 	IKE_SA_CompletedTightR(spiI, spiR, nI, nR,  I, R, Key) @#i
     ==> (Ex #j . IKE_SA_WeakAgreementI(spiI, spiR, nI, nR, I, R, Key) @ #j
         & #j < #i)"
 
+// In IKE SA exchange, I has non-injective agreement with R and every complete run of I corresponds to a unique complete run of R
 lemma IKE_SA_injective_agreement_I[use_induction]:
      "All spiI spiR nI nR I R Key #i #j #k .
 	IKE_SA_CompletedTightI(spiI, spiR, nI, nR, I, R, Key) @#i
@@ -674,6 +682,7 @@ lemma IKE_SA_injective_agreement_I[use_induction]:
 	& IKE_SA_CompletedTightR(spiI, spiR, nI, nR, I, R, Key) @ #k // the additional run
     ==> #j = #k"
 
+// rephrasing of above
 lemma IKE_SA_injective_agreement_I_v2:
      "All spiI spiR nI nR I R Key #i.
 	IKE_SA_CompletedTightI(spiI, spiR, nI, nR, I, R, Key) @#i
@@ -682,7 +691,7 @@ lemma IKE_SA_injective_agreement_I_v2:
         & not (Ex A2 B2 #i2. IKE_SA_CompletedTightI(spiI, spiR, nI, nR, A2, B2, Key) @ #i2
                            & not (#i2 = #i)))"
 
-
+// In IKE SA exchange, R has non-injective agreement with I and every complete run of R corresponds to a unique run of I (I need not complete this run because I's final step is after R's final step)
 lemma IKE_SA_injective_agreement_R[use_induction]:
      "All spiI spiR nI nR I R Key #i #j #k. 
         IKE_SA_CompletedTightR(spiI, spiR, nI, nR, I, R, Key) @#i
@@ -691,6 +700,7 @@ lemma IKE_SA_injective_agreement_R[use_induction]:
         & IKE_SA_WeakAgreementI(spiI, spiR, nI, nR, I, R, Key) @ #k
         ==> #j = #k"
 
+// Rephrasing of the above
 lemma IKE_SA_injective_agreement_R_v2:
      "All spiI spiR nI nR I R Key #i.
 	IKE_SA_CompletedTightR(spiI, spiR, nI, nR, I, R, Key) @#i
@@ -698,6 +708,10 @@ lemma IKE_SA_injective_agreement_R_v2:
         & #j < #i
         & not (Ex spiI1 spiR1 nI1 nR1 I1 R1 #i2. IKE_SA_WeakAgreementI(spiI1, spiR1, nI1, nR1, I1, R1, Key)@ #i2
                            & not (#i2 = #j)))"
+
+
+
+
 
 /*******************************************************
 ======= Lemmas: IKE Initial Child ==========
@@ -721,44 +735,51 @@ summary of summaries:
 ==============================================================================
 */
 
-
+// Initial Child runs - sanity check
 lemma InitialChild_existence: exists-trace
     "Ex spiI spiR I R key #i #j. IKE_ChildSA_InitialR(spiI, spiR, I, R ,key)@#j 
 	& IKE_ChildSA_InitialI(spiI, spiR, I, R ,key)@#i 
 	& #j<#i"
 
-lemma InitialChild_aliveness_I [use_induction]: // the initiator completes the Child SA from the AUTH exchange and the responder is alive
+// I completes the initial Child SA and the responder is alive (again we prove a slightly stronger statement, in that R must also be involved in an Initial Child exchange)
+lemma InitialChild_aliveness_I [use_induction]: 
   "All spiI spiR I R key #i. IKE_ChildSA_InitialI(spiI, spiR, I, R,key)@#i
 	==> (Ex spiI1 spiR1 I1 key1 #j. IKE_ChildSA_InitialI(spiI1, spiR1, R, I1 ,key1)@#j &#j<#i)
 	      |(Ex spiI1 spiR1 I1 key1 #j. IKE_ChildSA_InitialR(spiI1, spiR1, I1, R, key1)@#j & #j < #i)"
 
-lemma InitialChild_aliveness_R [use_induction]: // the responder completes the Child SA from the AUTH exchange and the initiator is alive
+// same as the above from R's perspective
+lemma InitialChild_aliveness_R [use_induction]:
     "All spiI spiR I R key #i. IKE_ChildSA_InitialR(spiI, spiR, I, R,key)@#i 
 	==> Ex keymat2 #j. IKE_SA_AlivenessAgentB(I, keymat2)@#j &#j<#i "
 
+// I completes the initial Child SA and the responder is also completes the initial Child SA protocol, seemingly with I (and they agree on their roles)
 lemma InitialChild_weak_agreement_I [use_induction]: // the initiator completes the Child SA from the AUTH exchange and the responder is alive
     "All spiI spiR  I R key #i. IKE_ChildSA_InitialI(spiI, spiR, I, R,key)@#i
 	==> Ex spiI1 spiR1 key1 #j.  IKE_ChildSA_InitialR(spiI1, spiR1, I, R, key1)@#j
 		& #j < #i"
 
-lemma InitialChild_weak_agreement_R [use_induction]: // the initiator completes the Child SA from the AUTH exchange and the responder is alive
+// same as the above from R's perspective    
+lemma InitialChild_weak_agreement_R [use_induction]:
     "All spiI spiR  I R key #i. IKE_ChildSA_InitialR(spiI, spiR, I, R,key)@#i
 	==> Ex spiI1 Key1 #j . IKE_SA_InitialChildPriorI(spiI1, I, R, Key1) @#j
 		& #j < #i"
 
+// I completes the initial Child SA and the responder is also completes the initial Child SA protocol, seemingly with I; they agree on their roles and all variables except for the SPIs
 lemma Initial_child_non_injective_agreement_I_partial [use_induction]: 
     "All spiI spiR I R Key #i .
 	IKE_ChildSA_InitialI(spiI, spiR, I, R, Key) @#i
     ==> (Ex spiI1 spiR1 #j . IKE_ChildSA_InitialR(spiI1, spiR1, I, R, Key) @ #j
         & #j < #i)"
 
+// same as the above from R's perspective
 lemma Initial_child_non_injective_agreement_R_partial [use_induction]: 
     "All spiI spiR I R Key #i .
 	IKE_ChildSA_InitialR(spiI, spiR, I, R, Key) @#i
     ==> (Ex spiI1 #j . IKE_SA_InitialChildPriorI(spiI1, I, R, Key) @ #j
         & #j < #i)"
 
-lemma Initial_child_non_injective_agreement_I_counterexample: // counterexample to non-injective agreeement for I. I and R can agree an initial child with the same key but different SPIs
+// Counterexample to non-injective agreeement. I and R can agree an initial child with the same key but different spiI
+lemma Initial_child_non_injective_agreement_I_counterexample: 
 exists-trace
 "Ex spiI spiI1 spiR I R Key #i #j.
 	IKE_ChildSA_InitialI(spiI, spiR, I, R, Key) @#i
@@ -766,7 +787,8 @@ exists-trace
 	& #j < #i
 	& not(spiI = spiI1)"
 
-lemma Initial_child_non_injective_agreement_I_counterexample2: // counterexample to non-injective agreeement for I. I and R can agree an initial child with the same key but different SPIs
+// Counterexample to non-injective agreeement. I and R can agree an initial child with the same key but different spiR and spiI
+lemma Initial_child_non_injective_agreement_I_counterexample2: 
 exists-trace
 "Ex spiI spiR spiI1 spiR1 I R Key #i #j.
 	IKE_ChildSA_InitialI(spiI, spiR, I, R, Key) @#i
@@ -775,7 +797,8 @@ exists-trace
 	& not(spiI = spiI1)
 	& not(spiR = spiR1)"
 
-lemma Initial_child_non_injective_agreement_R_counterexample: // counterexample to non-injective agreeement for I. I and R can agree an initial child with the same key but different SPIs
+// counterexample to non-injective agreeement for R. I and R can agree an initial child with the same key but different spiI
+lemma Initial_child_non_injective_agreement_R_counterexample: 
 exists-trace
 "Ex spiI spiR spiI1 I R Key #i #j #k1 #k2.
 	IKE_ChildSA_InitialR(spiI, spiR, I, R, Key) @#i 
@@ -785,7 +808,7 @@ exists-trace
 	&K(spiI1) @#k2
 	& not(spiI1 = spiI)"
 
-
+// Accepting different SPIs, injective agreement from I's persective
 lemma Initial_child_injective_agreement_I_partial [use_induction]: 
     "All spiI spiR I R Key #i .
 	IKE_ChildSA_InitialI(spiI, spiR, I, R, Key) @#i
@@ -794,6 +817,7 @@ lemma Initial_child_injective_agreement_I_partial [use_induction]:
         & not(Ex I1 R1 spiI2 spiR2 #l. IKE_ChildSA_InitialR(spiI2, spiR2, I1, R1, Key) @ #l & not(#l = #j))
 )"
 
+// same from R's perspective
 lemma Initial_child_injective_agreement_R_partial [use_induction]: 
     "All spiI spiR I R Key #i .
 	IKE_ChildSA_InitialR(spiI, spiR, I, R, Key) @#i
@@ -820,17 +844,19 @@ summary of summaries:
 ==============================================================================
 */
 
+// Rekey exists - sanity check
 lemma Rekey_exists: exists-trace
     "Ex I R Keys newKeys spiI spiR ni nr #i #j. 
 	REKEY_SA_CompleteR(I, R, Keys, newKeys, spiI, spiR, ni, nr) @#i
 	& REKEY_SA_CompleteI(I, R, Keys, newKeys, spiI, spiR, ni, nr) @#j"
 
-// this is a stronger form of aliveness since the responder and initiator agree on their roles
-lemma Rekey_aliveness_I [use_induction]: // the initiator completes and the responder is alive
+// the initiator completes and the responder is alive
+lemma Rekey_aliveness_I [use_induction]: 
     "All I R Keys newKeys spiI spiR ni nr #i. REKEY_SA_CompleteI(I, R, Keys, newKeys, spiI, spiR, ni, nr)  @#i 
 	==> Ex #j. REKEY_Aliveness(R)@#j & #j<#i "
 
-lemma Rekey_aliveness_R [use_induction]: //the responder completes, and the initiator is alive
+// the responder completes rekeying and the initiator is alive
+lemma Rekey_aliveness_R [use_induction]: 
     "All I R Keys newKeys spiI spiR ni nr #i. REKEY_SA_CompleteR(I, R, Keys, newKeys, spiI, spiR, ni, nr)  @#i 
 	==> Ex #j. REKEY_Aliveness(I)@#j & #j<#i"
 
@@ -850,6 +876,7 @@ summary of summaries:
   CreateChild_aliveness_R_simple_Contrapositive_alt(exists-trace): verified (29 steps)
 ==============================================================================*/
 
+// Create Child exists - sanity check
 lemma CreateChild_exists: exists-trace
     "Ex spiI spiR newspiI newspiR nI nR I R Key childKey #i1 #i2 #j1 #j2.
 	IKE_SA_CompletedTightR(spiI, spiR, nI, nR,  I, R, Key) @#i1
