@@ -1,11 +1,31 @@
 (herald IKEv2-PSK (algebra diffie-hellman))
 
+;;;;;;;;;;;;;;
+;; Preamble ;;
+;;;;;;;;;;;;;;
+
+;; Protocol:	 IKEv2 PPK RFC 8784 extension
+;; Modeler:              Sophie Stevens, Paul D. Rowe, Emily Gray 
+;; Date:	             09/2024
+;; Status:	             Complete
+
+;; RFC PPK: https://www.rfc-editor.org/rfc/rfc8784.pdf
+;; RFC IKEv2: https://www.rfc-editor.org/rfc/pdfrfc/rfc7296.txt.pdf
+
+;; In this protocol we consider:
+;; **** creating the initial SA
+;; **** creating a child SA
+;; **** rekeying the initial SA
+
+;; We do not consider rekeying a Child SA
+
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Model simplifications ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; 1. We ignore TSi and TSr (the traffic selectors)
-;; 2. 
+;; 2. We assume that the initiator of the IKE SA also initiates the Rekey and Create Child protocols
 
 ;;;;;;;;;;;;
 ;; Macros ;;
@@ -99,6 +119,8 @@
 ;; Protocol ;;
 ;;;;;;;;;;;;;;
 
+;; in init-rc, the initiator rekeys BEFORE creating a child
+
 (defprotocol ikev2_psk diffie-hellman
   (defrole init-rc
     (vars (i rki cci rndx) (SPI_init SPI_resp n_init n_resp SPI_init2 SPI_resp2 nrk_init nrk_resp SPIrk_init SPIrk_resp SPIcc_init SPIcc_resp ncc_init ncc_resp data ) (gr grkr gccr base )
@@ -126,6 +148,8 @@
     (non-orig psk ppk)
     )
     
+;; in resp-rc, the responder rekeys BEFORE creating a child
+
   (defrole resp-rc
     (vars (r rkr ccr rndx) (SPI_init SPI_resp n_init n_resp SPI_init2 SPI_resp2 nrk_init nrk_resp SPIrk_init SPIrk_resp SPIcc_init SPIcc_resp ncc_init ncc_resp data ) (gi grki gcci base )
 	  (psk ppk skey ) (ID_init ID_resp id_ppk name )      
@@ -149,7 +173,8 @@
     (non-orig psk ppk)
     )
 
-  
+
+;; in init-cr, the initiator creates a child BEFORE rekeying
   
   (defrole init-cr
     (vars (i rki cci rndx) (SPI_init SPI_resp n_init n_resp SPI_init2 SPI_resp2 nrk_init nrk_resp SPIrk_init SPIrk_resp SPIcc_init SPIcc_resp ncc_init ncc_resp data ) (gr grkr gccr base )
@@ -177,6 +202,7 @@
     (non-orig psk ppk)
   )
 
+;; in resp-cr, the responder creates a child  BEFORE rekeying
   (defrole resp-cr
      (vars (r rkr ccr rndx) (SPI_init SPI_resp n_init n_resp SPI_init2 SPI_resp2 nrk_init nrk_resp SPIrk_init SPIrk_resp SPIcc_init SPIcc_resp ncc_init ncc_resp data ) (gi grki gcci base )
 	  (psk ppk skey ) (ID_init ID_resp id_ppk name )      
@@ -206,7 +232,7 @@
   ;;;;;;;;;;;
 
   ;; A given psk can only be associated with two names
-  ;; (in the order of the initiator"s name followed by responder"s name)
+  ;; (in the order of the initiator's name followed by responder's name)
   (defrule IDs_eq
     (forall
      ((ID_init1 ID_init2 ID_resp1 ID_resp2 name) (psk skey))
@@ -344,10 +370,12 @@
 )
 
 END COMMENT)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Preliminary exploration  ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+;; analyse IKE_SA from the initiator's perspective
 (defskeleton ikev2_psk
   (vars
     (SPI_init SPI_resp n_init n_resp SPI_init2 SPI_resp2 data) (psk ppk skey) (ID_init id_ppk ID_resp name)
@@ -360,7 +388,7 @@ END COMMENT)
    (comment "analyse IKE_SA from the initiator's perspective") 
 )
 
-;; TO DO: what happens when I move the uniq-gen of SPIs and nonces to here (restricting them to relevant party)
+;; analyse rekey then create child from the initiator's perspective
 (defskeleton ikev2_psk
   (vars
     (SPI_init SPI_resp n_init n_resp SPI_init2 SPI_resp2 nrk_init
@@ -378,6 +406,7 @@ END COMMENT)
    (comment "analyse rekey then create child from the initiator's perspective") 
 )
 
+;; analyse rekey then create child from the responder's perspective
 (defskeleton ikev2_psk
   (vars
     (SPI_init SPI_resp n_init n_resp SPI_init2 SPI_resp2 nrk_init
@@ -395,6 +424,7 @@ END COMMENT)
    (comment "analyse rekey then create child from the responder's perspective") 
 )
 
+;; analyse create child then rekey from the initiator's perspective
 (defskeleton ikev2_psk
   (vars
     (SPI_init SPI_resp n_init n_resp SPI_init2 SPI_resp2 nrk_init
@@ -412,6 +442,7 @@ END COMMENT)
    (comment "analyse create child then rekey from the initiator's perspective") 
 )
 
+;; analyse create child then rekey from the responder's perspective
 (defskeleton ikev2_psk
   (vars
     (SPI_init SPI_resp n_init n_resp SPI_init2 SPI_resp2 nrk_init
@@ -431,7 +462,9 @@ END COMMENT)
 
 
 
-(comment SECRECY
+(comment SECRECY - For useability, we keep this section commented; to evaluate secrecy, remove this line, and the line beginning "SECRECY ENDCOMMENT"
+
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Secrecy properties for IKE_SA ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -929,16 +962,8 @@ END COMMENT)
 
 
 
-
-
-
-
-
-
-
-
-
 SECRECY ENDCOMMENT)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Authentication Goals     ;;
 ;; for security association ;;
@@ -946,7 +971,6 @@ SECRECY ENDCOMMENT)
 
 ; Aliveness --> weak agreement --> non-injective agreement --> injective agreement
 
-;; QUESTION how to make injective?
 ;; The following defgoal verifies non-injective agreement of both the IKE_SA and initial CHILD_SA from the initiator's perspective, up to the possible disagreement of SPI_init2 and SPI_resp2
 (defgoal ikev2_psk
   (forall
@@ -1241,7 +1265,6 @@ SECRECY ENDCOMMENT)
           (fact pskIDs psk ID_init ID_resp)
           (fact isKeyIDFor id_ppk ppk))))))
 
-;; QUESTION --> why is it not interpreting multiplicative inverses cirrectky
 (defgoal ikev2_psk; weak agreement of rekey then create child from resp-rc's perspective, as long as we're willing to have different SPIs
   (forall
     ((SPI_init SPI_resp n_init n_resp SPI_init2 SPI_resp2 nrk_init
@@ -1369,10 +1392,8 @@ SECRECY ENDCOMMENT)
           (p "init-rc" "ID_resp" z-0 ID_resp)
           (p "init-rc" "id_ppk" z-0 id_ppk)
           (p "init-rc" "gr" z-0 (exp (gen) r))
-;          (p "init-rc" "grkr" z-0 (exp (gen) rkr))
           (p "init-rc" "gccr" z-0 (exp (gen) ccr))
           (p "init-rc" "i" z-0 i)
-;           (p "init-rc" "rki" z-0 rki)
           (p "init-rc" "cci" z-0 cci) 
           ;(ugen SPI_init) (ugen n_init) (ugen nrk_init)(ugen SPIrk_init) (ugen SPIcc_init) (ugen ncc_init)         (ugen SPI_init2-0) 
           (fact peerID z ID_init)
