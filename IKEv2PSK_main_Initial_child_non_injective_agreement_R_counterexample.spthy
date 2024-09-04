@@ -1,0 +1,3386 @@
+theory IKEv2PSK_main begin
+
+// Function signature and definition of the equational theory E
+
+builtins: diffie-hellman
+functions: fst/1, h/1, hmac/2, pair/2, prf/2, prf_plus/2, sdec/2,
+           select/2, senc/2, snd/1
+equations:
+    fst(<x.1, x.2>) = x.1,
+    sdec(senc(x.1, x.2), x.2) = x.1,
+    snd(<x.1, x.2>) = x.2
+
+
+
+
+
+
+
+
+
+
+
+rule (modulo E) reveal_dh:
+   [ !DHtoReveal( $I, k ) ] --[ RevDH( $I ) ]-> [ Out( k ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) enrol_agent:
+   [ Fr( ~ID ) ] --[ UniqueID( $A, ~ID ) ]-> [ !Agent( $A, ~ID ) ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) generate_psk:
+   [ Fr( ~psk ), !Agent( $I, ID_init ), !Agent( $R, ID_resp ) ]
+  --[ GenPSK( ~psk ), UniquePSK( $I, $R, ~psk ) ]->
+   [
+   !Init_PSK( $I, $R, ID_init, ID_resp, ~psk ),
+   !Resp_PSK( $R, $I, ID_init, ID_resp, ~psk )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) generate_ppk:
+   [ Fr( ~ppk ), Fr( ~id_ppk ) ]
+  --[ GenPPK( ~ppk ), UniqueID( ~id_ppk, ~ppk ) ]->
+   [
+   !Init_PPK( $I, $R, ~id_ppk, ~ppk ),
+   !Resp_PPK( $R, $I, ~id_ppk, ~ppk )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+restriction UniqueID:
+  "∀ ID o1 o2 #i #j.
+    ((UniqueID( ID, o1 ) @ #i) ∧ (UniqueID( ID, o2 ) @ #j)) ⇒
+    (o1 = o2)"
+  // safety formula
+
+restriction UniqueID2:
+  "∀ ID1 ID2 o #i #j.
+    ((UniqueID( ID1, o ) @ #i) ∧ (UniqueID( ID2, o ) @ #j)) ⇒
+    (ID1 = ID2)"
+  // safety formula
+
+restriction UniquePSK:
+  "∀ I R psk1 psk2 #i #j.
+    ((UniquePSK( I, R, psk1 ) @ #i) ∧ (UniquePSK( I, R, psk2 ) @ #j)) ⇒
+    (psk1 = psk2)"
+  // safety formula
+
+rule (modulo E) IKE_SA_INIT_I:
+   [ Fr( ~n_init ), Fr( ~SPI_init ), Fr( ~e_init ) ]
+  -->
+   [
+   Out( <~SPI_init, 'IKE_SA_INIT', 'msg1', 'flag_i', 'g'^~e_init, 
+         ~n_init, 'USE_PPK'>
+   ),
+   StateInitI( $I, $R, ~SPI_init, ~e_init, ~n_init,
+               <~SPI_init, 'IKE_SA_INIT', 'msg1', 'flag_i', 'g'^~e_init, ~n_init, 
+                'USE_PPK'>
+   ),
+   !DHtoReveal( $I, ~e_init )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) IKE_SA_INIT_R:
+   [
+   In( <SPI_init, 'IKE_SA_INIT', 'msg1', 'flag_i', KEi, n_init, 
+        'USE_PPK'>
+   ),
+   Fr( ~n_resp ), Fr( ~SPI_resp ), Fr( ~e_resp )
+   ]
+  --[
+  IKE_SA_Agreed( <SPI_init, ~SPI_resp>, $R, 'responder',
+                 <n_init, ~n_resp>,
+                 <prf(<n_init, ~n_resp>, KEi^~e_resp), n_init, ~n_resp, SPI_init, 
+                  ~SPI_resp>
+  )
+  ]->
+   [
+   Out( <SPI_init, ~SPI_resp, 'IKE_SA_INIT', 'msg1', 'flag_r', 
+         'g'^~e_resp, ~n_resp, 'USE_PPK'>
+   ),
+   StateInitR( $I, $R, SPI_init, ~SPI_resp, n_init, ~n_resp,
+               <prf(<n_init, ~n_resp>, KEi^~e_resp), n_init, ~n_resp, SPI_init, 
+                ~SPI_resp>,
+               <SPI_init, 'IKE_SA_INIT', 'msg1', 'flag_i', KEi, n_init, 'USE_PPK'
+               >,
+               <SPI_init, ~SPI_resp, 'IKE_SA_INIT', 'msg1', 'flag_r', 
+                'g'^~e_resp, ~n_resp, 'USE_PPK'>
+   ),
+   !DHtoReveal( $R, ~e_resp )
+   ]
+
+  /*
+  rule (modulo AC) IKE_SA_INIT_R:
+     [
+     In( <SPI_init, 'IKE_SA_INIT', 'msg1', 'flag_i', KEi, n_init, 
+          'USE_PPK'>
+     ),
+     Fr( ~n_resp ), Fr( ~SPI_resp ), Fr( ~e_resp )
+     ]
+    --[
+    IKE_SA_Agreed( <SPI_init, ~SPI_resp>, $R, 'responder',
+                   <n_init, ~n_resp>,
+                   <prf(<n_init, ~n_resp>, z), n_init, ~n_resp, SPI_init, ~SPI_resp>
+    )
+    ]->
+     [
+     Out( <SPI_init, ~SPI_resp, 'IKE_SA_INIT', 'msg1', 'flag_r', 
+           'g'^~e_resp, ~n_resp, 'USE_PPK'>
+     ),
+     StateInitR( $I, $R, SPI_init, ~SPI_resp, n_init, ~n_resp,
+                 <prf(<n_init, ~n_resp>, z), n_init, ~n_resp, SPI_init, ~SPI_resp>,
+                 <SPI_init, 'IKE_SA_INIT', 'msg1', 'flag_i', KEi, n_init, 'USE_PPK'
+                 >,
+                 <SPI_init, ~SPI_resp, 'IKE_SA_INIT', 'msg1', 'flag_r', 
+                  'g'^~e_resp, ~n_resp, 'USE_PPK'>
+     ),
+     !DHtoReveal( $R, ~e_resp )
+     ]
+    variants (modulo AC)
+    1. ~e_resp
+             = ~e_resp.19
+       KEi   = KEi.21
+       z     = KEi.21^~e_resp.19
+    
+    2. ~e_resp
+             = ~e_resp.28
+       KEi   = z.39^inv(~e_resp.28)
+       z     = z.39
+    
+    3. ~e_resp
+             = ~e_resp.150
+       KEi   = x.294^x.295
+       z     = x.294^(~e_resp.150*x.295)
+    
+    4. ~e_resp
+             = ~e_resp.152
+       KEi   = x.298^inv((~e_resp.152*x.299))
+       z     = x.298^inv(x.299)
+    
+    5. ~e_resp
+             = ~e_resp.152
+       KEi   = x.298^(x.299*inv(~e_resp.152))
+       z     = x.298^x.299
+    
+    6. ~e_resp
+             = ~e_resp.153
+       KEi   = x.299^(x.300*inv((~e_resp.153*x.301)))
+       z     = x.299^(x.300*inv(x.301))
+    
+    7. KEi   = DH_neutral
+       z     = DH_neutral
+  */
+
+rule (modulo E) IKE_AUTH_I:
+   [
+   In( <SPI_init, SPI_resp, 'IKE_SA_INIT', 'msg1', 'flag_r', KEr, 
+        n_resp, 'USE_PPK'>
+   ),
+   !Agent( $I, ID_init ),
+   StateInitI( $I, $R, SPI_init, e_init, n_init, msg1 ),
+   !Init_PSK( $I, $R, ID_init, ID_resp, psk ),
+   !Init_PPK( $I, $R, id_ppk, ppk ), Fr( ~SPIi2 )
+   ]
+  --[
+  IKE_SA_Agreed( <SPI_init, SPI_resp>, $I, 'initiator',
+                 <n_init, n_resp>,
+                 <prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, SPI_init, 
+                  SPI_resp>
+  ),
+  IKE_SA_AlivenessAgentB( $I,
+                          <prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, SPI_init, 
+                           SPI_resp>
+  ),
+  IKE_SA_WeakAgreementI( SPI_init, SPI_resp, n_init, n_resp, $I, $R,
+                         <prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, SPI_init, 
+                          SPI_resp>
+  ),
+  IKE_SA_InitialChildPriorI( ~SPIi2, $I, $R,
+                             <
+                              h(select(<
+                                        prf(ppk,
+                                            <
+                                             h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, 
+                                                       n_resp, SPI_init, SPI_resp>,
+                                                      'd')), 
+                                             '0x01'>), 
+                                        n_init, n_resp>,
+                                       'd')), 
+                              h(select(<
+                                        prf(ppk,
+                                            <
+                                             h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, 
+                                                       n_resp, SPI_init, SPI_resp>,
+                                                      'd')), 
+                                             '0x01'>), 
+                                        n_init, n_resp>,
+                                       'ai')), 
+                              h(select(<
+                                        prf(ppk,
+                                            <
+                                             h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, 
+                                                       n_resp, SPI_init, SPI_resp>,
+                                                      'd')), 
+                                             '0x01'>), 
+                                        n_init, n_resp>,
+                                       'ar')), 
+                              h(select(<
+                                        prf(ppk,
+                                            <
+                                             h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, 
+                                                       n_resp, SPI_init, SPI_resp>,
+                                                      'd')), 
+                                             '0x01'>), 
+                                        n_init, n_resp>,
+                                       'ei')), 
+                              h(select(<
+                                        prf(ppk,
+                                            <
+                                             h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, 
+                                                       n_resp, SPI_init, SPI_resp>,
+                                                      'd')), 
+                                             '0x01'>), 
+                                        n_init, n_resp>,
+                                       'er'))
+                             >
+  )
+  ]->
+   [
+   Out( <SPI_init, SPI_resp, 'IKE_AUTH', 'msg2', 'flag_i', 
+         senc(<ID_init, 
+               h(<h(<psk, 'KeyPadforIKEv2'>), msg1, n_resp, 
+                  hmac(ID_init,
+                       prf(ppk,
+                           <
+                            h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                                      SPI_init, SPI_resp>,
+                                     'pi')), 
+                            '0x01'>))
+                 >), 
+               ~SPIi2, 'notify_initial_contact', 'ppk_identity', id_ppk>,
+              h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                        SPI_init, SPI_resp>,
+                       'ei'))), 
+         hmac(<ID_init, 
+               h(<h(<psk, 'KeyPadforIKEv2'>), msg1, n_resp, 
+                  hmac(ID_init,
+                       prf(ppk,
+                           <
+                            h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                                      SPI_init, SPI_resp>,
+                                     'pi')), 
+                            '0x01'>))
+                 >), 
+               ~SPIi2, 'notify_initial_contact', 'ppk_identity', id_ppk>,
+              h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                        SPI_init, SPI_resp>,
+                       'ai')))
+        >
+   ),
+   TempSecurityAssociation( 'initiator', $I, $R, 'SA1', SPI_init,
+                            SPI_resp,
+                            <prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, SPI_init, 
+                             SPI_resp>,
+                            <
+                             prf(ppk,
+                                 <
+                                  h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                                            SPI_init, SPI_resp>,
+                                           'd')), 
+                                  '0x01'>), 
+                             h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                                       SPI_init, SPI_resp>,
+                                      'ai')), 
+                             h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                                       SPI_init, SPI_resp>,
+                                      'ar')), 
+                             h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                                       SPI_init, SPI_resp>,
+                                      'ei')), 
+                             h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                                       SPI_init, SPI_resp>,
+                                      'er')), 
+                             prf(ppk,
+                                 <
+                                  h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                                            SPI_init, SPI_resp>,
+                                           'pi')), 
+                                  '0x01'>), 
+                             prf(ppk,
+                                 <
+                                  h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                                            SPI_init, SPI_resp>,
+                                           'pr')), 
+                                  '0x01'>)
+                            >
+   ),
+   StateAuthI( $I, $R, ID_init,
+               <prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, SPI_init, 
+                SPI_resp>,
+               <
+                prf(ppk,
+                    <
+                     h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                               SPI_init, SPI_resp>,
+                              'd')), 
+                     '0x01'>), 
+                h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                          SPI_init, SPI_resp>,
+                         'ai')), 
+                h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                          SPI_init, SPI_resp>,
+                         'ar')), 
+                h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                          SPI_init, SPI_resp>,
+                         'ei')), 
+                h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                          SPI_init, SPI_resp>,
+                         'er')), 
+                prf(ppk,
+                    <
+                     h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                               SPI_init, SPI_resp>,
+                              'pi')), 
+                     '0x01'>), 
+                prf(ppk,
+                    <
+                     h(select(<prf(<n_init, n_resp>, KEr^e_init), n_init, n_resp, 
+                               SPI_init, SPI_resp>,
+                              'pr')), 
+                     '0x01'>)
+               >,
+               msg1,
+               <SPI_init, SPI_resp, 'IKE_SA_INIT', 'msg1', 'flag_r', KEr, n_resp, 
+                'USE_PPK'>,
+               ~SPIi2, n_init, n_resp
+   )
+   ]
+
+  /*
+  rule (modulo AC) IKE_AUTH_I:
+     [
+     In( <SPI_init, SPI_resp, 'IKE_SA_INIT', 'msg1', 'flag_r', KEr, 
+          n_resp, 'USE_PPK'>
+     ),
+     !Agent( $I, ID_init ),
+     StateInitI( $I, $R, SPI_init, e_init, n_init, msg1 ),
+     !Init_PSK( $I, $R, ID_init, ID_resp, psk ),
+     !Init_PPK( $I, $R, id_ppk, ppk ), Fr( ~SPIi2 )
+     ]
+    --[
+    IKE_SA_Agreed( <SPI_init, SPI_resp>, $I, 'initiator',
+                   <n_init, n_resp>,
+                   <prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, SPI_resp>
+    ),
+    IKE_SA_AlivenessAgentB( $I,
+                            <prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, SPI_resp>
+    ),
+    IKE_SA_WeakAgreementI( SPI_init, SPI_resp, n_init, n_resp, $I, $R,
+                           <prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, SPI_resp>
+    ),
+    IKE_SA_InitialChildPriorI( ~SPIi2, $I, $R,
+                               <
+                                h(select(<
+                                          prf(ppk,
+                                              <
+                                               h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, 
+                                                         SPI_init, SPI_resp>,
+                                                        'd')), 
+                                               '0x01'>), 
+                                          n_init, n_resp>,
+                                         'd')), 
+                                h(select(<
+                                          prf(ppk,
+                                              <
+                                               h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, 
+                                                         SPI_init, SPI_resp>,
+                                                        'd')), 
+                                               '0x01'>), 
+                                          n_init, n_resp>,
+                                         'ai')), 
+                                h(select(<
+                                          prf(ppk,
+                                              <
+                                               h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, 
+                                                         SPI_init, SPI_resp>,
+                                                        'd')), 
+                                               '0x01'>), 
+                                          n_init, n_resp>,
+                                         'ar')), 
+                                h(select(<
+                                          prf(ppk,
+                                              <
+                                               h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, 
+                                                         SPI_init, SPI_resp>,
+                                                        'd')), 
+                                               '0x01'>), 
+                                          n_init, n_resp>,
+                                         'ei')), 
+                                h(select(<
+                                          prf(ppk,
+                                              <
+                                               h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, 
+                                                         SPI_init, SPI_resp>,
+                                                        'd')), 
+                                               '0x01'>), 
+                                          n_init, n_resp>,
+                                         'er'))
+                               >
+    )
+    ]->
+     [
+     Out( <SPI_init, SPI_resp, 'IKE_AUTH', 'msg2', 'flag_i', 
+           senc(<ID_init, 
+                 h(<h(<psk, 'KeyPadforIKEv2'>), msg1, n_resp, 
+                    hmac(ID_init,
+                         prf(ppk,
+                             <
+                              h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                                        SPI_resp>,
+                                       'pi')), 
+                              '0x01'>))
+                   >), 
+                 ~SPIi2, 'notify_initial_contact', 'ppk_identity', id_ppk>,
+                h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                          SPI_resp>,
+                         'ei'))), 
+           hmac(<ID_init, 
+                 h(<h(<psk, 'KeyPadforIKEv2'>), msg1, n_resp, 
+                    hmac(ID_init,
+                         prf(ppk,
+                             <
+                              h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                                        SPI_resp>,
+                                       'pi')), 
+                              '0x01'>))
+                   >), 
+                 ~SPIi2, 'notify_initial_contact', 'ppk_identity', id_ppk>,
+                h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                          SPI_resp>,
+                         'ai')))
+          >
+     ),
+     TempSecurityAssociation( 'initiator', $I, $R, 'SA1', SPI_init,
+                              SPI_resp,
+                              <prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, SPI_resp>,
+                              <
+                               prf(ppk,
+                                   <
+                                    h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                                              SPI_resp>,
+                                             'd')), 
+                                    '0x01'>), 
+                               h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                                         SPI_resp>,
+                                        'ai')), 
+                               h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                                         SPI_resp>,
+                                        'ar')), 
+                               h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                                         SPI_resp>,
+                                        'ei')), 
+                               h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                                         SPI_resp>,
+                                        'er')), 
+                               prf(ppk,
+                                   <
+                                    h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                                              SPI_resp>,
+                                             'pi')), 
+                                    '0x01'>), 
+                               prf(ppk,
+                                   <
+                                    h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                                              SPI_resp>,
+                                             'pr')), 
+                                    '0x01'>)
+                              >
+     ),
+     StateAuthI( $I, $R, ID_init,
+                 <prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, SPI_resp>,
+                 <
+                  prf(ppk,
+                      <
+                       h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                                 SPI_resp>,
+                                'd')), 
+                       '0x01'>), 
+                  h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                            SPI_resp>,
+                           'ai')), 
+                  h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                            SPI_resp>,
+                           'ar')), 
+                  h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                            SPI_resp>,
+                           'ei')), 
+                  h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                            SPI_resp>,
+                           'er')), 
+                  prf(ppk,
+                      <
+                       h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                                 SPI_resp>,
+                                'pi')), 
+                       '0x01'>), 
+                  prf(ppk,
+                      <
+                       h(select(<prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init, 
+                                 SPI_resp>,
+                                'pr')), 
+                       '0x01'>)
+                 >,
+                 msg1,
+                 <SPI_init, SPI_resp, 'IKE_SA_INIT', 'msg1', 'flag_r', KEr, n_resp, 
+                  'USE_PPK'>,
+                 ~SPIi2, n_init, n_resp
+     )
+     ]
+    variants (modulo AC)
+     1. KEr   = KEr.26
+        e_init
+              = one
+        z     = KEr.26
+    
+     2. KEr   = KEr.29
+        e_init
+              = e_init.32
+        z     = KEr.29^e_init.32
+    
+     3. KEr   = DH_neutral
+        z     = DH_neutral
+    
+     4. KEr   = x.28^(x.29*x.30)
+        e_init
+              = inv(x.29)
+        z     = x.28^x.30
+    
+     5. KEr   = x.29^(x.30*x.31*inv(x.32))
+        e_init
+              = (x.32*inv(x.30))
+        z     = x.29^x.31
+    
+     6. KEr   = x.29^(x.30*inv((x.31*x.32)))
+        e_init
+              = (x.31*inv(x.30))
+        z     = x.29^inv(x.32)
+    
+     7. KEr   = x.30^x.31
+        e_init
+              = inv((x.31*x.34))
+        z     = x.30^inv(x.34)
+    
+     8. KEr   = x.30^x.31
+        e_init
+              = (x.34*inv(x.31))
+        z     = x.30^x.34
+    
+     9. KEr   = x.30^inv(x.31)
+        e_init
+              = inv(x.34)
+        z     = x.30^inv((x.31*x.34))
+    
+    10. KEr   = x.30^inv(x.31)
+        e_init
+              = (x.31*x.34)
+        z     = x.30^x.34
+    
+    11. KEr   = x.30^(x.31*x.32*inv((x.33*x.34)))
+        e_init
+              = (x.33*inv(x.31))
+        z     = x.30^(x.32*inv(x.34))
+    
+    12. KEr   = x.31^x.32
+        e_init
+              = (x.35*inv((x.32*x.36)))
+        z     = x.31^(x.35*inv(x.36))
+    
+    13. KEr   = x.31^inv(x.32)
+        e_init
+              = (x.35*inv(x.36))
+        z     = x.31^(x.35*inv((x.32*x.36)))
+    
+    14. KEr   = x.31^inv((x.32*x.33))
+        e_init
+              = (x.32*x.36)
+        z     = x.31^(x.36*inv(x.33))
+    
+    15. KEr   = x.31^inv((x.32*x.33))
+        e_init
+              = (x.32*inv(x.36))
+        z     = x.31^inv((x.33*x.36))
+    
+    16. KEr   = x.31^(x.32*x.33)
+        e_init
+              = inv((x.32*x.36))
+        z     = x.31^(x.33*inv(x.36))
+    
+    17. KEr   = x.31^(x.32*x.33)
+        e_init
+              = (x.36*inv(x.32))
+        z     = x.31^(x.33*x.36)
+    
+    18. KEr   = x.31^(x.32*inv(x.33))
+        e_init
+              = inv(x.36)
+        z     = x.31^(x.32*inv((x.33*x.36)))
+    
+    19. KEr   = x.31^(x.32*inv(x.33))
+        e_init
+              = inv((x.32*x.36))
+        z     = x.31^inv((x.33*x.36))
+    
+    20. KEr   = x.31^(x.32*inv(x.33))
+        e_init
+              = (x.33*x.36)
+        z     = x.31^(x.32*x.36)
+    
+    21. KEr   = x.31^(x.32*inv(x.33))
+        e_init
+              = (x.33*x.36*inv(x.32))
+        z     = x.31^x.36
+    
+    22. KEr   = x.31^(x.32*inv(x.33))
+        e_init
+              = (x.33*inv((x.32*x.36)))
+        z     = x.31^inv(x.36)
+    
+    23. KEr   = x.32^inv((x.33*x.34))
+        e_init
+              = (x.33*x.37*inv(x.38))
+        z     = x.32^(x.37*inv((x.34*x.38)))
+    
+    24. KEr   = x.32^(x.33*x.34)
+        e_init
+              = (x.37*inv((x.33*x.38)))
+        z     = x.32^(x.34*x.37*inv(x.38))
+    
+    25. KEr   = x.32^(x.33*x.34*inv(x.35))
+        e_init
+              = inv((x.33*x.38))
+        z     = x.32^(x.34*inv((x.35*x.38)))
+    
+    26. KEr   = x.32^(x.33*x.34*inv(x.35))
+        e_init
+              = (x.35*x.38*inv(x.33))
+        z     = x.32^(x.34*x.38)
+    
+    27. KEr   = x.32^(x.33*x.34*inv(x.35))
+        e_init
+              = (x.35*inv((x.33*x.38)))
+        z     = x.32^(x.34*inv(x.38))
+    
+    28. KEr   = x.32^(x.33*inv(x.34))
+        e_init
+              = (x.34*x.37*inv((x.33*x.38)))
+        z     = x.32^(x.37*inv(x.38))
+    
+    29. KEr   = x.32^(x.33*inv(x.34))
+        e_init
+              = (x.37*inv(x.38))
+        z     = x.32^(x.33*x.37*inv((x.34*x.38)))
+    
+    30. KEr   = x.32^(x.33*inv(x.34))
+        e_init
+              = (x.37*inv((x.33*x.38)))
+        z     = x.32^(x.37*inv((x.34*x.38)))
+    
+    31. KEr   = x.32^(x.33*inv((x.34*x.35)))
+        e_init
+              = (x.34*x.38)
+        z     = x.32^(x.33*x.38*inv(x.35))
+    
+    32. KEr   = x.32^(x.33*inv((x.34*x.35)))
+        e_init
+              = (x.34*x.38*inv(x.33))
+        z     = x.32^(x.38*inv(x.35))
+    
+    33. KEr   = x.32^(x.33*inv((x.34*x.35)))
+        e_init
+              = (x.34*inv(x.38))
+        z     = x.32^(x.33*inv((x.35*x.38)))
+    
+    34. KEr   = x.32^(x.33*inv((x.34*x.35)))
+        e_init
+              = (x.34*inv((x.33*x.38)))
+        z     = x.32^inv((x.35*x.38))
+    
+    35. KEr   = x.33^(x.34*x.35*inv(x.36))
+        e_init
+              = (x.36*x.39*inv((x.34*x.40)))
+        z     = x.33^(x.35*x.39*inv(x.40))
+    
+    36. KEr   = x.33^(x.34*x.35*inv(x.36))
+        e_init
+              = (x.39*inv((x.34*x.40)))
+        z     = x.33^(x.35*x.39*inv((x.36*x.40)))
+    
+    37. KEr   = x.33^(x.34*x.35*inv((x.36*x.37)))
+        e_init
+              = (x.36*x.40*inv(x.34))
+        z     = x.33^(x.35*x.40*inv(x.37))
+    
+    38. KEr   = x.33^(x.34*x.35*inv((x.36*x.37)))
+        e_init
+              = (x.36*inv((x.34*x.40)))
+        z     = x.33^(x.35*inv((x.37*x.40)))
+    
+    39. KEr   = x.33^(x.34*inv((x.35*x.36)))
+        e_init
+              = (x.35*x.39*inv(x.40))
+        z     = x.33^(x.34*x.39*inv((x.36*x.40)))
+    
+    40. KEr   = x.33^(x.34*inv((x.35*x.36)))
+        e_init
+              = (x.35*x.39*inv((x.34*x.40)))
+        z     = x.33^(x.39*inv((x.36*x.40)))
+    
+    41. KEr   = x.34^(x.35*x.36*inv((x.37*x.38)))
+        e_init
+              = (x.37*x.41*inv((x.35*x.42)))
+        z     = x.34^(x.36*x.41*inv((x.38*x.42)))
+    
+    42. KEr   = z.56^inv(e_init.41)
+        e_init
+              = e_init.41
+        z     = z.56
+    
+    43. KEr   = z.274^x.523
+        e_init
+              = inv(x.523)
+        z     = z.274
+    
+    44. KEr   = z.275^(x.524*inv(x.525))
+        e_init
+              = (x.525*inv(x.524))
+        z     = z.275
+    
+    45. KEr   = x.1107^x.1108
+        e_init
+              = e_init.559
+        z     = x.1107^(e_init.559*x.1108)
+    
+    46. KEr   = x.1107^(x.1108*inv(e_init.559))
+        e_init
+              = e_init.559
+        z     = x.1107^x.1108
+    
+    47. KEr   = x.1108^inv((e_init.560*x.1110))
+        e_init
+              = e_init.560
+        z     = x.1108^inv(x.1110)
+    
+    48. KEr   = x.1109^(x.1110*inv((e_init.561*x.1112)))
+        e_init
+              = e_init.561
+        z     = x.1109^(x.1110*inv(x.1112))
+  */
+
+rule (modulo E) IKE_AUTH_R:
+   [
+   In( <SPI_init, SPI_resp, 'IKE_AUTH', 'msg2', 'flag_i', 
+        senc(<ID_init, 
+              h(<h(<psk, 'KeyPadforIKEv2'>), msg1, n_resp, 
+                 hmac(ID_init, prf(ppk, <h(select(<SKEYSEED, S>, 'pi')), '0x01'>))
+                >), 
+              SPIi2, 'notify_initial_contact', 'ppk_identity', id_ppk>,
+             h(select(<SKEYSEED, S>, 'ei'))), 
+        hmac(<ID_init, 
+              h(<h(<psk, 'KeyPadforIKEv2'>), msg1, n_resp, 
+                 hmac(ID_init, prf(ppk, <h(select(<SKEYSEED, S>, 'pi')), '0x01'>))
+                >), 
+              SPIi2, 'notify_initial_contact', 'ppk_identity', id_ppk>,
+             h(select(<SKEYSEED, S>, 'ai')))
+       >
+   ),
+   !Agent( $R, ID_resp ),
+   StateInitR( $I, $R, SPI_init, SPI_resp, n_init, n_resp,
+               <SKEYSEED, S>, msg1, msg2
+   ),
+   !Resp_PSK( $R, $I, ID_init, ID_resp, psk ),
+   !Resp_PPK( $R, $I, id_ppk, ppk ), Fr( ~SPIr2 )
+   ]
+  --[
+  IKE_SA_CompletedR( SPI_init, SPI_resp, $I, $R, <SKEYSEED, S> ),
+  IKE_SA_AlivenessAgentA( $R, $I, <SKEYSEED, S> ),
+  IKE_SA_AlivenessAgentB( $R, <SKEYSEED, S> ),
+  IKE_SA_CompletedTightR( SPI_init, SPI_resp, n_init, n_resp, $I, $R,
+                          <SKEYSEED, S>
+  ),
+  IKE_SA_CompletedFullR( SPI_init, SPI_resp, n_init, n_resp, $I, $R,
+                         <SKEYSEED, S>,
+                         <prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+                          h(select(<SKEYSEED, S>, 'ai')), h(select(<SKEYSEED, S>, 'ar')), 
+                          h(select(<SKEYSEED, S>, 'ei')), h(select(<SKEYSEED, S>, 'er')), 
+                          prf(ppk, <h(select(<SKEYSEED, S>, 'pi')), '0x01'>), 
+                          prf(ppk, <h(select(<SKEYSEED, S>, 'pr')), '0x01'>)>
+  ),
+  IKE_ChildSA_InitialR( SPIi2, ~SPIr2, $I, $R,
+                        <
+                         h(select(<prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+                                   n_init, n_resp>,
+                                  'd')), 
+                         h(select(<prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+                                   n_init, n_resp>,
+                                  'ai')), 
+                         h(select(<prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+                                   n_init, n_resp>,
+                                  'ar')), 
+                         h(select(<prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+                                   n_init, n_resp>,
+                                  'ei')), 
+                         h(select(<prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+                                   n_init, n_resp>,
+                                  'er'))
+                        >
+  ),
+  KeysMade( $I, $R,
+            prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>),
+            h(select(<SKEYSEED, S>, 'ai')), h(select(<SKEYSEED, S>, 'ar')),
+            h(select(<SKEYSEED, S>, 'ei')), h(select(<SKEYSEED, S>, 'er')),
+            prf(ppk, <h(select(<SKEYSEED, S>, 'pi')), '0x01'>),
+            prf(ppk, <h(select(<SKEYSEED, S>, 'pr')), '0x01'>)
+  ),
+  NewKeysMade( $I, $R,
+               h(select(<prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+                         n_init, n_resp>,
+                        'd')),
+               h(select(<prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+                         n_init, n_resp>,
+                        'ai')),
+               h(select(<prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+                         n_init, n_resp>,
+                        'ar')),
+               h(select(<prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+                         n_init, n_resp>,
+                        'ei')),
+               h(select(<prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+                         n_init, n_resp>,
+                        'er'))
+  )
+  ]->
+   [
+   Out( <SPI_init, SPI_resp, 'IKE_AUTH', 'msg2', 'flag_r', 
+         senc(<ID_resp, 
+               h(<h(<psk, 'KeyPadforIKEv2'>), msg2, n_init, 
+                  hmac(ID_resp, prf(ppk, <h(select(<SKEYSEED, S>, 'pr')), '0x01'>))
+                 >), 
+               ~SPIr2, 'ppk_identity'>,
+              h(select(<SKEYSEED, S>, 'er'))), 
+         hmac(<ID_resp, 
+               h(<h(<psk, 'KeyPadforIKEv2'>), msg2, n_init, 
+                  hmac(ID_resp, prf(ppk, <h(select(<SKEYSEED, S>, 'pr')), '0x01'>))
+                 >), 
+               ~SPIr2, 'ppk_identity'>,
+              h(select(<SKEYSEED, S>, 'ar')))
+        >
+   ),
+   !SecurityAssociation( 'responder', 'original', $I, $R, SPI_init,
+                         SPI_resp, <SKEYSEED, S>,
+                         <prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+                          h(select(<SKEYSEED, S>, 'ai')), h(select(<SKEYSEED, S>, 'ar')), 
+                          h(select(<SKEYSEED, S>, 'ei')), h(select(<SKEYSEED, S>, 'er')), 
+                          prf(ppk, <h(select(<SKEYSEED, S>, 'pi')), '0x01'>), 
+                          prf(ppk, <h(select(<SKEYSEED, S>, 'pr')), '0x01'>)>
+   ),
+   !ChildSecurityAssociation( 'responder', 'original', $I, $R, SPIi2,
+                              ~SPIr2,
+                              <prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), n_init, n_resp
+                              >,
+                              <
+                               h(select(<prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+                                         n_init, n_resp>,
+                                        'd')), 
+                               h(select(<prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+                                         n_init, n_resp>,
+                                        'ai')), 
+                               h(select(<prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+                                         n_init, n_resp>,
+                                        'ar')), 
+                               h(select(<prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+                                         n_init, n_resp>,
+                                        'ei')), 
+                               h(select(<prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+                                         n_init, n_resp>,
+                                        'er'))
+                              >
+   ),
+   RCanCreateChild( $I, $R, <SKEYSEED, S>, SPI_init, SPI_resp ),
+   RCanRekey( $I, $R,
+              <prf(ppk, <h(select(<SKEYSEED, S>, 'd')), '0x01'>), 
+               h(select(<SKEYSEED, S>, 'ai')), h(select(<SKEYSEED, S>, 'ar')), 
+               h(select(<SKEYSEED, S>, 'ei')), h(select(<SKEYSEED, S>, 'er')), 
+               prf(ppk, <h(select(<SKEYSEED, S>, 'pi')), '0x01'>), 
+               prf(ppk, <h(select(<SKEYSEED, S>, 'pr')), '0x01'>)>
+   )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) IKE_AUTH_COMPLETE:
+   [
+   In( <SPI_init, SPI_resp, 'IKE_AUTH', 'msg2', 'flag_r', 
+        senc(<ID_resp, 
+              h(<h(<psk, 'KeyPadforIKEv2'>), msg2, n_init, hmac(ID_resp, SK_pr)
+                >), 
+              SPIr2, 'ppk_identity'>,
+             SK_er), 
+        hmac(<ID_resp, 
+              h(<h(<psk, 'KeyPadforIKEv2'>), msg2, n_init, hmac(ID_resp, SK_pr)
+                >), 
+              SPIr2, 'ppk_identity'>,
+             SK_ar)
+       >
+   ),
+   TempSecurityAssociation( 'initiator', $I, $R, 'SA1', SPI_init,
+                            SPI_resp, generatedKey,
+                            <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+   ),
+   StateAuthI( $I, $R, ID_init, generatedKey,
+               <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>, msg1, msg2,
+               SPIi2, n_init, n_resp
+   ),
+   !Init_PSK( $I, $R, ID_init, ID_resp, psk ),
+   !Init_PPK( $I, $R, id_ppk, ppk ), !Agent( $I, ID_init )
+   ]
+  --[
+  IKE_SA_CompletedI( SPI_init, SPI_resp, $I, $R, generatedKey ),
+  IKE_SA_CompletedTightI( SPI_init, SPI_resp, n_init, n_resp, $I, $R,
+                          generatedKey
+  ),
+  IKE_SA_CompletedFullI( SPI_init, SPI_resp, n_init, n_resp, $I, $R,
+                         generatedKey, <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+  ),
+  IKE_ChildSA_InitialI( SPIi2, SPIr2, $I, $R,
+                        <h(select(<SK_d, n_init, n_resp>, 'd')), 
+                         h(select(<SK_d, n_init, n_resp>, 'ai')), 
+                         h(select(<SK_d, n_init, n_resp>, 'ar')), 
+                         h(select(<SK_d, n_init, n_resp>, 'ei')), 
+                         h(select(<SK_d, n_init, n_resp>, 'er'))>
+  ),
+  IKE_SA_AlivenessAgentA( $I, $R, generatedKey ),
+  KeysMade( $I, $R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr ),
+  NewKeysMade( $I, $R, h(select(<SK_d, n_init, n_resp>, 'd')),
+               h(select(<SK_d, n_init, n_resp>, 'ai')),
+               h(select(<SK_d, n_init, n_resp>, 'ar')),
+               h(select(<SK_d, n_init, n_resp>, 'ei')),
+               h(select(<SK_d, n_init, n_resp>, 'er'))
+  )
+  ]->
+   [
+   !SecurityAssociation( 'initiator', 'original', $I, $R, SPI_init,
+                         SPI_resp, generatedKey,
+                         <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+   ),
+   !ChildSecurityAssociation( 'initiator', 'original', $I, $R, SPIi2,
+                              SPIr2, <SK_d, n_init, n_resp>,
+                              <h(select(<SK_d, n_init, n_resp>, 'd')), 
+                               h(select(<SK_d, n_init, n_resp>, 'ai')), 
+                               h(select(<SK_d, n_init, n_resp>, 'ar')), 
+                               h(select(<SK_d, n_init, n_resp>, 'ei')), 
+                               h(select(<SK_d, n_init, n_resp>, 'er'))>
+   ),
+   ICanCreateChild( $I, $R,
+                    <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>, SPI_init,
+                    SPI_resp
+   ),
+   ICanRekey( $I, $R, <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+   )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) IKE_CREATE_CHILD_SA_INIT:
+   [
+   !SecurityAssociation( 'initiator', 'original', $I, $R, SPI_init,
+                         SPI_resp, generatedKey,
+                         <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+   ),
+   Fr( ~child_ni ), Fr( ~child_spi_init ), Fr( ~child_e_init ),
+   ICanCreateChild( $I, $R,
+                    <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>, SPI_init,
+                    SPI_resp
+   )
+   ]
+  --[
+  ChildRequestI( $I, $R, generatedKey, ~child_spi_init ),
+  CreateChildAliveness( $I )
+  ]->
+   [
+   Out( <SPI_init, SPI_resp, 'CREATE_CHILD_REQUEST', 'msg3', 
+         'flag_i', 
+         senc(<'CREATE_CHILD_REQUEST', ~child_spi_init, ~child_ni, 
+               'g'^~child_e_init>,
+              SK_ei), 
+         hmac(<'CREATE_CHILD_REQUEST', ~child_spi_init, ~child_ni, 
+               'g'^~child_e_init>,
+              SK_ai)
+        >
+   ),
+   IChildSARequest( $I, $R, ~child_spi_init, ~child_ni, ~child_e_init
+   ),
+   !DHtoReveal( $I, ~child_e_init )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) IKE_CREATE_CHILD_SA_RESP:
+   [
+   In( <SPI_init, SPI_resp, 'CREATE_CHILD_REQUEST', 'msg3', 'flag_i', 
+        senc(<'CREATE_CHILD_REQUEST', child_spi_init, child_ni, KEi>,
+             SK_ei), 
+        hmac(<'CREATE_CHILD_REQUEST', child_spi_init, child_ni, KEi>,
+             SK_ai)
+       >
+   ),
+   !SecurityAssociation( 'responder', 'original', $I, $R, SPI_init,
+                         SPI_resp, generatedKey,
+                         <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+   ),
+   Fr( ~child_spi_resp ), Fr( ~child_nr ), Fr( ~child_e_resp ),
+   RCanCreateChild( $I, $R, generatedKey, SPI_init, SPI_resp )
+   ]
+  --[
+  CreateChildSAR( $I, $R, generatedKey, child_spi_init,
+                  ~child_spi_resp, <SK_d, KEi^~child_e_resp, child_ni, ~child_nr>
+  ),
+  CreateChildAliveness( $R ),
+  NewKeysMade( $I, $R,
+               h(select(<SK_d, KEi^~child_e_resp, child_ni, ~child_nr>, 'd')),
+               h(select(<SK_d, KEi^~child_e_resp, child_ni, ~child_nr>, 'ai')),
+               h(select(<SK_d, KEi^~child_e_resp, child_ni, ~child_nr>, 'ar')),
+               h(select(<SK_d, KEi^~child_e_resp, child_ni, ~child_nr>, 'ei')),
+               h(select(<SK_d, KEi^~child_e_resp, child_ni, ~child_nr>, 'er'))
+  ),
+  IKE_ChildSA_R( child_spi_init, ~child_spi_resp, child_ni,
+                 ~child_nr, $I, $R, <SK_d, KEi^~child_e_resp, child_ni, ~child_nr>
+  )
+  ]->
+   [
+   Out( <SPI_init, SPI_resp, 'CREATE_CHILD_RESPONSE', 'msg3', 
+         'flag_r', 
+         senc(<'CREATE_CHILD_RESPONSE', ~child_spi_resp, ~child_nr, 
+               'g'^~child_e_resp>,
+              SK_er), 
+         hmac(<'CREATE_CHILD_RESPONSE', ~child_spi_resp, ~child_nr, 
+               'g'^~child_e_resp>,
+              SK_ar)
+        >
+   ),
+   !ChildSecurityAssociation( 'responder', 'new', $I, $R,
+                              child_spi_init, ~child_spi_resp,
+                              <SK_d, KEi^~child_e_resp, child_ni, ~child_nr>,
+                              <h(select(<SK_d, KEi^~child_e_resp, child_ni, ~child_nr>, 'd')), 
+                               h(select(<SK_d, KEi^~child_e_resp, child_ni, ~child_nr>, 'ai')), 
+                               h(select(<SK_d, KEi^~child_e_resp, child_ni, ~child_nr>, 'ar')), 
+                               h(select(<SK_d, KEi^~child_e_resp, child_ni, ~child_nr>, 'ei')), 
+                               h(select(<SK_d, KEi^~child_e_resp, child_ni, ~child_nr>, 'er'))>
+   ),
+   !DHtoReveal( $R, ~child_e_resp )
+   ]
+
+  /*
+  rule (modulo AC) IKE_CREATE_CHILD_SA_RESP:
+     [
+     In( <SPI_init, SPI_resp, 'CREATE_CHILD_REQUEST', 'msg3', 'flag_i', 
+          senc(<'CREATE_CHILD_REQUEST', child_spi_init, child_ni, KEi>,
+               SK_ei), 
+          hmac(<'CREATE_CHILD_REQUEST', child_spi_init, child_ni, KEi>,
+               SK_ai)
+         >
+     ),
+     !SecurityAssociation( 'responder', 'original', $I, $R, SPI_init,
+                           SPI_resp, generatedKey,
+                           <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+     ),
+     Fr( ~child_spi_resp ), Fr( ~child_nr ), Fr( ~child_e_resp ),
+     RCanCreateChild( $I, $R, generatedKey, SPI_init, SPI_resp )
+     ]
+    --[
+    CreateChildSAR( $I, $R, generatedKey, child_spi_init,
+                    ~child_spi_resp, <SK_d, z, child_ni, ~child_nr>
+    ),
+    CreateChildAliveness( $R ),
+    NewKeysMade( $I, $R,
+                 h(select(<SK_d, z, child_ni, ~child_nr>, 'd')),
+                 h(select(<SK_d, z, child_ni, ~child_nr>, 'ai')),
+                 h(select(<SK_d, z, child_ni, ~child_nr>, 'ar')),
+                 h(select(<SK_d, z, child_ni, ~child_nr>, 'ei')),
+                 h(select(<SK_d, z, child_ni, ~child_nr>, 'er'))
+    ),
+    IKE_ChildSA_R( child_spi_init, ~child_spi_resp, child_ni,
+                   ~child_nr, $I, $R, <SK_d, z, child_ni, ~child_nr>
+    )
+    ]->
+     [
+     Out( <SPI_init, SPI_resp, 'CREATE_CHILD_RESPONSE', 'msg3', 
+           'flag_r', 
+           senc(<'CREATE_CHILD_RESPONSE', ~child_spi_resp, ~child_nr, 
+                 'g'^~child_e_resp>,
+                SK_er), 
+           hmac(<'CREATE_CHILD_RESPONSE', ~child_spi_resp, ~child_nr, 
+                 'g'^~child_e_resp>,
+                SK_ar)
+          >
+     ),
+     !ChildSecurityAssociation( 'responder', 'new', $I, $R,
+                                child_spi_init, ~child_spi_resp, <SK_d, z, child_ni, ~child_nr>,
+                                <h(select(<SK_d, z, child_ni, ~child_nr>, 'd')), 
+                                 h(select(<SK_d, z, child_ni, ~child_nr>, 'ai')), 
+                                 h(select(<SK_d, z, child_ni, ~child_nr>, 'ar')), 
+                                 h(select(<SK_d, z, child_ni, ~child_nr>, 'ei')), 
+                                 h(select(<SK_d, z, child_ni, ~child_nr>, 'er'))>
+     ),
+     !DHtoReveal( $R, ~child_e_resp )
+     ]
+    variants (modulo AC)
+    1. ~child_e_resp
+             = ~child_e_resp.33
+       KEi   = KEi.36
+       z     = KEi.36^~child_e_resp.33
+    
+    2. ~child_e_resp
+             = ~child_e_resp.55
+       KEi   = z.80^inv(~child_e_resp.55)
+       z     = z.80
+    
+    3. ~child_e_resp
+             = ~child_e_resp.549
+       KEi   = x.1093^x.1094
+       z     = x.1093^(~child_e_resp.549*x.1094)
+    
+    4. ~child_e_resp
+             = ~child_e_resp.552
+       KEi   = x.1099^inv((~child_e_resp.552*x.1100))
+       z     = x.1099^inv(x.1100)
+    
+    5. ~child_e_resp
+             = ~child_e_resp.552
+       KEi   = x.1099^(x.1100*inv(~child_e_resp.552))
+       z     = x.1099^x.1100
+    
+    6. ~child_e_resp
+             = ~child_e_resp.553
+       KEi   = x.1100^(x.1101*inv((~child_e_resp.553*x.1102)))
+       z     = x.1100^(x.1101*inv(x.1102))
+    
+    7. KEi   = DH_neutral
+       z     = DH_neutral
+  */
+
+rule (modulo E) IKE_CREATE_CHILD_SA_INIT_COMPLETE:
+   [
+   In( <SPI_init, SPI_resp, 'CREATE_CHILD_RESPONSE', 'msg3', 
+        'flag_r', 
+        senc(<'CREATE_CHILD_RESPONSE', child_spi_resp, child_nr, KEr>,
+             SK_er), 
+        hmac(<'CREATE_CHILD_RESPONSE', child_spi_resp, child_nr, KEr>,
+             SK_ar)
+       >
+   ),
+   !SecurityAssociation( 'initiator', 'original', $I, $R, SPI_init,
+                         SPI_resp, generatedKey,
+                         <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+   ),
+   IChildSARequest( $I, $R, child_spi_init, child_ni, child_e_init )
+   ]
+  --[
+  CreateChildSAI( $I, $R, generatedKey, child_spi_init,
+                  child_spi_resp, <SK_d, KEr^child_e_init, child_ni, child_nr>
+  ),
+  NewKeysMade( $I, $R,
+               h(select(<SK_d, KEr^child_e_init, child_ni, child_nr>, 'd')),
+               h(select(<SK_d, KEr^child_e_init, child_ni, child_nr>, 'ai')),
+               h(select(<SK_d, KEr^child_e_init, child_ni, child_nr>, 'ar')),
+               h(select(<SK_d, KEr^child_e_init, child_ni, child_nr>, 'ei')),
+               h(select(<SK_d, KEr^child_e_init, child_ni, child_nr>, 'er'))
+  ),
+  IKE_ChildSA_I( child_spi_init, child_spi_resp, child_ni, child_nr,
+                 $I, $R, <SK_d, KEr^child_e_init, child_ni, child_nr>
+  )
+  ]->
+   [
+   !ChildSecurityAssociation( 'initiator', 'new', $I, $R,
+                              child_spi_init, child_spi_resp,
+                              <SK_d, KEr^child_e_init, child_ni, child_nr>,
+                              <h(select(<SK_d, KEr^child_e_init, child_ni, child_nr>, 'd')), 
+                               h(select(<SK_d, KEr^child_e_init, child_ni, child_nr>, 'ai')), 
+                               h(select(<SK_d, KEr^child_e_init, child_ni, child_nr>, 'ar')), 
+                               h(select(<SK_d, KEr^child_e_init, child_ni, child_nr>, 'ei')), 
+                               h(select(<SK_d, KEr^child_e_init, child_ni, child_nr>, 'er'))>
+   )
+   ]
+
+  /*
+  rule (modulo AC) IKE_CREATE_CHILD_SA_INIT_COMPLETE:
+     [
+     In( <SPI_init, SPI_resp, 'CREATE_CHILD_RESPONSE', 'msg3', 
+          'flag_r', 
+          senc(<'CREATE_CHILD_RESPONSE', child_spi_resp, child_nr, KEr>,
+               SK_er), 
+          hmac(<'CREATE_CHILD_RESPONSE', child_spi_resp, child_nr, KEr>,
+               SK_ar)
+         >
+     ),
+     !SecurityAssociation( 'initiator', 'original', $I, $R, SPI_init,
+                           SPI_resp, generatedKey,
+                           <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+     ),
+     IChildSARequest( $I, $R, child_spi_init, child_ni, child_e_init )
+     ]
+    --[
+    CreateChildSAI( $I, $R, generatedKey, child_spi_init,
+                    child_spi_resp, <SK_d, z, child_ni, child_nr>
+    ),
+    NewKeysMade( $I, $R, h(select(<SK_d, z, child_ni, child_nr>, 'd')),
+                 h(select(<SK_d, z, child_ni, child_nr>, 'ai')),
+                 h(select(<SK_d, z, child_ni, child_nr>, 'ar')),
+                 h(select(<SK_d, z, child_ni, child_nr>, 'ei')),
+                 h(select(<SK_d, z, child_ni, child_nr>, 'er'))
+    ),
+    IKE_ChildSA_I( child_spi_init, child_spi_resp, child_ni, child_nr,
+                   $I, $R, <SK_d, z, child_ni, child_nr>
+    )
+    ]->
+     [
+     !ChildSecurityAssociation( 'initiator', 'new', $I, $R,
+                                child_spi_init, child_spi_resp, <SK_d, z, child_ni, child_nr>,
+                                <h(select(<SK_d, z, child_ni, child_nr>, 'd')), 
+                                 h(select(<SK_d, z, child_ni, child_nr>, 'ai')), 
+                                 h(select(<SK_d, z, child_ni, child_nr>, 'ar')), 
+                                 h(select(<SK_d, z, child_ni, child_nr>, 'ei')), 
+                                 h(select(<SK_d, z, child_ni, child_nr>, 'er'))>
+     )
+     ]
+    variants (modulo AC)
+     1. KEr   = KEr.27
+        child_e_init
+              = one
+        z     = KEr.27
+    
+     2. KEr   = KEr.37
+        child_e_init
+              = child_e_init.47
+        z     = KEr.37^child_e_init.47
+    
+     3. KEr   = DH_neutral
+        z     = DH_neutral
+    
+     4. KEr   = x.29^(x.30*x.31)
+        child_e_init
+              = inv(x.30)
+        z     = x.29^x.31
+    
+     5. KEr   = x.30^(x.31*x.32*inv(x.33))
+        child_e_init
+              = (x.33*inv(x.31))
+        z     = x.30^x.32
+    
+     6. KEr   = x.30^(x.31*inv((x.32*x.33)))
+        child_e_init
+              = (x.32*inv(x.31))
+        z     = x.30^inv(x.33)
+    
+     7. KEr   = x.31^(x.32*x.33*inv((x.34*x.35)))
+        child_e_init
+              = (x.34*inv(x.32))
+        z     = x.31^(x.33*inv(x.35))
+    
+     8. KEr   = x.38^x.39
+        child_e_init
+              = inv((x.39*x.49))
+        z     = x.38^inv(x.49)
+    
+     9. KEr   = x.38^x.39
+        child_e_init
+              = (x.49*inv(x.39))
+        z     = x.38^x.49
+    
+    10. KEr   = x.38^inv(x.39)
+        child_e_init
+              = inv(x.49)
+        z     = x.38^inv((x.39*x.49))
+    
+    11. KEr   = x.38^inv(x.39)
+        child_e_init
+              = (x.39*x.49)
+        z     = x.38^x.49
+    
+    12. KEr   = x.39^x.40
+        child_e_init
+              = (x.50*inv((x.40*x.51)))
+        z     = x.39^(x.50*inv(x.51))
+    
+    13. KEr   = x.39^inv(x.40)
+        child_e_init
+              = (x.50*inv(x.51))
+        z     = x.39^(x.50*inv((x.40*x.51)))
+    
+    14. KEr   = x.39^inv((x.40*x.41))
+        child_e_init
+              = (x.40*x.51)
+        z     = x.39^(x.51*inv(x.41))
+    
+    15. KEr   = x.39^inv((x.40*x.41))
+        child_e_init
+              = (x.40*inv(x.51))
+        z     = x.39^inv((x.41*x.51))
+    
+    16. KEr   = x.39^(x.40*x.41)
+        child_e_init
+              = inv((x.40*x.51))
+        z     = x.39^(x.41*inv(x.51))
+    
+    17. KEr   = x.39^(x.40*x.41)
+        child_e_init
+              = (x.51*inv(x.40))
+        z     = x.39^(x.41*x.51)
+    
+    18. KEr   = x.39^(x.40*inv(x.41))
+        child_e_init
+              = inv(x.51)
+        z     = x.39^(x.40*inv((x.41*x.51)))
+    
+    19. KEr   = x.39^(x.40*inv(x.41))
+        child_e_init
+              = inv((x.40*x.51))
+        z     = x.39^inv((x.41*x.51))
+    
+    20. KEr   = x.39^(x.40*inv(x.41))
+        child_e_init
+              = (x.41*x.51)
+        z     = x.39^(x.40*x.51)
+    
+    21. KEr   = x.39^(x.40*inv(x.41))
+        child_e_init
+              = (x.41*x.51*inv(x.40))
+        z     = x.39^x.51
+    
+    22. KEr   = x.39^(x.40*inv(x.41))
+        child_e_init
+              = (x.41*inv((x.40*x.51)))
+        z     = x.39^inv(x.51)
+    
+    23. KEr   = x.40^inv((x.41*x.42))
+        child_e_init
+              = (x.41*x.52*inv(x.53))
+        z     = x.40^(x.52*inv((x.42*x.53)))
+    
+    24. KEr   = x.40^(x.41*x.42)
+        child_e_init
+              = (x.52*inv((x.41*x.53)))
+        z     = x.40^(x.42*x.52*inv(x.53))
+    
+    25. KEr   = x.40^(x.41*x.42*inv(x.43))
+        child_e_init
+              = inv((x.41*x.53))
+        z     = x.40^(x.42*inv((x.43*x.53)))
+    
+    26. KEr   = x.40^(x.41*x.42*inv(x.43))
+        child_e_init
+              = (x.43*x.53*inv(x.41))
+        z     = x.40^(x.42*x.53)
+    
+    27. KEr   = x.40^(x.41*x.42*inv(x.43))
+        child_e_init
+              = (x.43*inv((x.41*x.53)))
+        z     = x.40^(x.42*inv(x.53))
+    
+    28. KEr   = x.40^(x.41*inv(x.42))
+        child_e_init
+              = (x.42*x.52*inv((x.41*x.53)))
+        z     = x.40^(x.52*inv(x.53))
+    
+    29. KEr   = x.40^(x.41*inv(x.42))
+        child_e_init
+              = (x.52*inv(x.53))
+        z     = x.40^(x.41*x.52*inv((x.42*x.53)))
+    
+    30. KEr   = x.40^(x.41*inv(x.42))
+        child_e_init
+              = (x.52*inv((x.41*x.53)))
+        z     = x.40^(x.52*inv((x.42*x.53)))
+    
+    31. KEr   = x.40^(x.41*inv((x.42*x.43)))
+        child_e_init
+              = (x.42*x.53)
+        z     = x.40^(x.41*x.53*inv(x.43))
+    
+    32. KEr   = x.40^(x.41*inv((x.42*x.43)))
+        child_e_init
+              = (x.42*x.53*inv(x.41))
+        z     = x.40^(x.53*inv(x.43))
+    
+    33. KEr   = x.40^(x.41*inv((x.42*x.43)))
+        child_e_init
+              = (x.42*inv(x.53))
+        z     = x.40^(x.41*inv((x.43*x.53)))
+    
+    34. KEr   = x.40^(x.41*inv((x.42*x.43)))
+        child_e_init
+              = (x.42*inv((x.41*x.53)))
+        z     = x.40^inv((x.43*x.53))
+    
+    35. KEr   = x.41^(x.42*x.43*inv(x.44))
+        child_e_init
+              = (x.44*x.54*inv((x.42*x.55)))
+        z     = x.41^(x.43*x.54*inv(x.55))
+    
+    36. KEr   = x.41^(x.42*x.43*inv(x.44))
+        child_e_init
+              = (x.54*inv((x.42*x.55)))
+        z     = x.41^(x.43*x.54*inv((x.44*x.55)))
+    
+    37. KEr   = x.41^(x.42*x.43*inv((x.44*x.45)))
+        child_e_init
+              = (x.44*x.55*inv(x.42))
+        z     = x.41^(x.43*x.55*inv(x.45))
+    
+    38. KEr   = x.41^(x.42*x.43*inv((x.44*x.45)))
+        child_e_init
+              = (x.44*inv((x.42*x.55)))
+        z     = x.41^(x.43*inv((x.45*x.55)))
+    
+    39. KEr   = x.41^(x.42*inv((x.43*x.44)))
+        child_e_init
+              = (x.43*x.54*inv(x.55))
+        z     = x.41^(x.42*x.54*inv((x.44*x.55)))
+    
+    40. KEr   = x.41^(x.42*inv((x.43*x.44)))
+        child_e_init
+              = (x.43*x.54*inv((x.42*x.55)))
+        z     = x.41^(x.54*inv((x.44*x.55)))
+    
+    41. KEr   = x.42^(x.43*x.44*inv((x.45*x.46)))
+        child_e_init
+              = (x.45*x.56*inv((x.43*x.57)))
+        z     = x.42^(x.44*x.56*inv((x.46*x.57)))
+    
+    42. KEr   = z.51^inv(child_e_init.39)
+        child_e_init
+              = child_e_init.39
+        z     = z.51
+    
+    43. KEr   = z.88^x.150
+        child_e_init
+              = inv(x.150)
+        z     = z.88
+    
+    44. KEr   = z.89^(x.151*inv(x.152))
+        child_e_init
+              = (x.152*inv(x.151))
+        z     = z.89
+    
+    45. KEr   = x.401^x.402
+        child_e_init
+              = child_e_init.208
+        z     = x.401^(child_e_init.208*x.402)
+    
+    46. KEr   = x.401^(x.402*inv(child_e_init.208))
+        child_e_init
+              = child_e_init.208
+        z     = x.401^x.402
+    
+    47. KEr   = x.402^inv((child_e_init.209*x.404))
+        child_e_init
+              = child_e_init.209
+        z     = x.402^inv(x.404)
+    
+    48. KEr   = x.403^(x.404*inv((child_e_init.210*x.406)))
+        child_e_init
+              = child_e_init.210
+        z     = x.403^(x.404*inv(x.406))
+  */
+
+rule (modulo E) IKE_REKEY_SA_INIT:
+   [
+   !SecurityAssociation( 'initiator', 'original', $I, $R, SPI_init,
+                         SPI_resp, generatedKey,
+                         <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+   ),
+   ICanRekey( $I, $R, <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+   ),
+   Fr( ~n_init ), Fr( ~e_init ), Fr( ~newSPI_init )
+   ]
+  --[
+  REKEY_Aliveness( $I ),
+  REKEY_RequestI( $I, $R,
+                  <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>, ~newSPI_init,
+                  ~n_init
+  )
+  ]->
+   [
+   REKEY_SA_RequestI( $I, $R, ~n_init,
+                      <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>, ~e_init,
+                      ~newSPI_init
+   ),
+   Out( <SPI_init, SPI_resp, 'REKEY_SA', 'msg4', 'flag_i', 
+         senc(<'REKEY_REQUEST', ~newSPI_init, ~n_init, 'g'^~e_init>,
+              SK_ei), 
+         hmac(<'REKEY_REQUEST', ~newSPI_init, ~n_init, 'g'^~e_init>, SK_ai)>
+   ),
+   !DHtoReveal( $I, ~e_init )
+   ]
+
+  /* has exactly the trivial AC variant */
+
+rule (modulo E) IKE_REKEY_SA_RESP:
+   [
+   In( <SPI_init, SPI_resp, 'REKEY_SA', 'msg4', 'flag_i', 
+        senc(<'REKEY_REQUEST', newSPI_init, n_init, KEi_rekey>, SK_ei), 
+        hmac(<'REKEY_REQUEST', newSPI_init, n_init, KEi_rekey>, SK_ai)>
+   ),
+   !SecurityAssociation( 'responder', 'original', $I, $R, SPI_init,
+                         SPI_resp, generatedKey,
+                         <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+   ),
+   RCanRekey( $I, $R, <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+   ),
+   Fr( ~n_resp ), Fr( ~e_resp ), Fr( ~newSPI_resp )
+   ]
+  --[
+  REKEY_SA_CompleteR( $I, $R,
+                      <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>,
+                      <
+                       h(select(<h(<SK_d, KEi_rekey^~e_resp, n_init, ~n_resp>), n_init, 
+                                 ~n_resp, newSPI_init, ~newSPI_resp>,
+                                'd')), 
+                       h(select(<h(<SK_d, KEi_rekey^~e_resp, n_init, ~n_resp>), n_init, 
+                                 ~n_resp, newSPI_init, ~newSPI_resp>,
+                                'ai')), 
+                       h(select(<h(<SK_d, KEi_rekey^~e_resp, n_init, ~n_resp>), n_init, 
+                                 ~n_resp, newSPI_init, ~newSPI_resp>,
+                                'ar')), 
+                       h(select(<h(<SK_d, KEi_rekey^~e_resp, n_init, ~n_resp>), n_init, 
+                                 ~n_resp, newSPI_init, ~newSPI_resp>,
+                                'ei')), 
+                       h(select(<h(<SK_d, KEi_rekey^~e_resp, n_init, ~n_resp>), n_init, 
+                                 ~n_resp, newSPI_init, ~newSPI_resp>,
+                                'er'))
+                      >,
+                      newSPI_init, ~newSPI_resp, n_init, ~n_resp
+  ),
+  REKEY_Aliveness( $R ),
+  NewKeysMade( $I, $R,
+               h(select(<h(<SK_d, KEi_rekey^~e_resp, n_init, ~n_resp>), n_init, 
+                         ~n_resp, newSPI_init, ~newSPI_resp>,
+                        'd')),
+               h(select(<h(<SK_d, KEi_rekey^~e_resp, n_init, ~n_resp>), n_init, 
+                         ~n_resp, newSPI_init, ~newSPI_resp>,
+                        'ai')),
+               h(select(<h(<SK_d, KEi_rekey^~e_resp, n_init, ~n_resp>), n_init, 
+                         ~n_resp, newSPI_init, ~newSPI_resp>,
+                        'ar')),
+               h(select(<h(<SK_d, KEi_rekey^~e_resp, n_init, ~n_resp>), n_init, 
+                         ~n_resp, newSPI_init, ~newSPI_resp>,
+                        'ei')),
+               h(select(<h(<SK_d, KEi_rekey^~e_resp, n_init, ~n_resp>), n_init, 
+                         ~n_resp, newSPI_init, ~newSPI_resp>,
+                        'er'))
+  )
+  ]->
+   [
+   Out( <SPI_init, SPI_resp, 'REKEY_SA', 'msg4', 'flag_r', 
+         senc(<'REKEY_RESPONSE', ~newSPI_resp, ~n_resp, 'g'^~e_resp>,
+              SK_er), 
+         hmac(<'REKEY_RESPONSE', ~newSPI_resp, ~n_resp, 'g'^~e_resp>, SK_ar)
+        >
+   ),
+   !DHtoReveal( $R, ~e_resp ),
+   !RekeyedSecurityAssociation( 'responder', 'rekeyed', $I, $R,
+                                newSPI_init, ~newSPI_resp,
+                                <h(<SK_d, KEi_rekey^~e_resp, n_init, ~n_resp>), n_init, ~n_resp, 
+                                 newSPI_init, ~newSPI_resp>,
+                                <
+                                 h(select(<h(<SK_d, KEi_rekey^~e_resp, n_init, ~n_resp>), n_init, 
+                                           ~n_resp, newSPI_init, ~newSPI_resp>,
+                                          'd')), 
+                                 h(select(<h(<SK_d, KEi_rekey^~e_resp, n_init, ~n_resp>), n_init, 
+                                           ~n_resp, newSPI_init, ~newSPI_resp>,
+                                          'ai')), 
+                                 h(select(<h(<SK_d, KEi_rekey^~e_resp, n_init, ~n_resp>), n_init, 
+                                           ~n_resp, newSPI_init, ~newSPI_resp>,
+                                          'ar')), 
+                                 h(select(<h(<SK_d, KEi_rekey^~e_resp, n_init, ~n_resp>), n_init, 
+                                           ~n_resp, newSPI_init, ~newSPI_resp>,
+                                          'ei')), 
+                                 h(select(<h(<SK_d, KEi_rekey^~e_resp, n_init, ~n_resp>), n_init, 
+                                           ~n_resp, newSPI_init, ~newSPI_resp>,
+                                          'er'))
+                                >
+   )
+   ]
+
+  /*
+  rule (modulo AC) IKE_REKEY_SA_RESP:
+     [
+     In( <SPI_init, SPI_resp, 'REKEY_SA', 'msg4', 'flag_i', 
+          senc(<'REKEY_REQUEST', newSPI_init, n_init, KEi_rekey>, SK_ei), 
+          hmac(<'REKEY_REQUEST', newSPI_init, n_init, KEi_rekey>, SK_ai)>
+     ),
+     !SecurityAssociation( 'responder', 'original', $I, $R, SPI_init,
+                           SPI_resp, generatedKey,
+                           <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+     ),
+     RCanRekey( $I, $R, <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+     ),
+     Fr( ~n_resp ), Fr( ~e_resp ), Fr( ~newSPI_resp )
+     ]
+    --[
+    REKEY_SA_CompleteR( $I, $R,
+                        <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>,
+                        <
+                         h(select(<h(<SK_d, z, n_init, ~n_resp>), n_init, ~n_resp, 
+                                   newSPI_init, ~newSPI_resp>,
+                                  'd')), 
+                         h(select(<h(<SK_d, z, n_init, ~n_resp>), n_init, ~n_resp, 
+                                   newSPI_init, ~newSPI_resp>,
+                                  'ai')), 
+                         h(select(<h(<SK_d, z, n_init, ~n_resp>), n_init, ~n_resp, 
+                                   newSPI_init, ~newSPI_resp>,
+                                  'ar')), 
+                         h(select(<h(<SK_d, z, n_init, ~n_resp>), n_init, ~n_resp, 
+                                   newSPI_init, ~newSPI_resp>,
+                                  'ei')), 
+                         h(select(<h(<SK_d, z, n_init, ~n_resp>), n_init, ~n_resp, 
+                                   newSPI_init, ~newSPI_resp>,
+                                  'er'))
+                        >,
+                        newSPI_init, ~newSPI_resp, n_init, ~n_resp
+    ),
+    REKEY_Aliveness( $R ),
+    NewKeysMade( $I, $R,
+                 h(select(<h(<SK_d, z, n_init, ~n_resp>), n_init, ~n_resp, 
+                           newSPI_init, ~newSPI_resp>,
+                          'd')),
+                 h(select(<h(<SK_d, z, n_init, ~n_resp>), n_init, ~n_resp, 
+                           newSPI_init, ~newSPI_resp>,
+                          'ai')),
+                 h(select(<h(<SK_d, z, n_init, ~n_resp>), n_init, ~n_resp, 
+                           newSPI_init, ~newSPI_resp>,
+                          'ar')),
+                 h(select(<h(<SK_d, z, n_init, ~n_resp>), n_init, ~n_resp, 
+                           newSPI_init, ~newSPI_resp>,
+                          'ei')),
+                 h(select(<h(<SK_d, z, n_init, ~n_resp>), n_init, ~n_resp, 
+                           newSPI_init, ~newSPI_resp>,
+                          'er'))
+    )
+    ]->
+     [
+     Out( <SPI_init, SPI_resp, 'REKEY_SA', 'msg4', 'flag_r', 
+           senc(<'REKEY_RESPONSE', ~newSPI_resp, ~n_resp, 'g'^~e_resp>,
+                SK_er), 
+           hmac(<'REKEY_RESPONSE', ~newSPI_resp, ~n_resp, 'g'^~e_resp>, SK_ar)
+          >
+     ),
+     !DHtoReveal( $R, ~e_resp ),
+     !RekeyedSecurityAssociation( 'responder', 'rekeyed', $I, $R,
+                                  newSPI_init, ~newSPI_resp,
+                                  <h(<SK_d, z, n_init, ~n_resp>), n_init, ~n_resp, newSPI_init, 
+                                   ~newSPI_resp>,
+                                  <
+                                   h(select(<h(<SK_d, z, n_init, ~n_resp>), n_init, ~n_resp, 
+                                             newSPI_init, ~newSPI_resp>,
+                                            'd')), 
+                                   h(select(<h(<SK_d, z, n_init, ~n_resp>), n_init, ~n_resp, 
+                                             newSPI_init, ~newSPI_resp>,
+                                            'ai')), 
+                                   h(select(<h(<SK_d, z, n_init, ~n_resp>), n_init, ~n_resp, 
+                                             newSPI_init, ~newSPI_resp>,
+                                            'ar')), 
+                                   h(select(<h(<SK_d, z, n_init, ~n_resp>), n_init, ~n_resp, 
+                                             newSPI_init, ~newSPI_resp>,
+                                            'ei')), 
+                                   h(select(<h(<SK_d, z, n_init, ~n_resp>), n_init, ~n_resp, 
+                                             newSPI_init, ~newSPI_resp>,
+                                            'er'))
+                                  >
+     )
+     ]
+    variants (modulo AC)
+    1. ~e_resp
+             = ~e_resp.34
+       KEi_rekey
+             = KEi_rekey.37
+       z     = KEi_rekey.37^~e_resp.34
+    
+    2. ~e_resp
+             = ~e_resp.57
+       KEi_rekey
+             = z.83^inv(~e_resp.57)
+       z     = z.83
+    
+    3. ~e_resp
+             = ~e_resp.599
+       KEi_rekey
+             = x.1193^x.1194
+       z     = x.1193^(~e_resp.599*x.1194)
+    
+    4. ~e_resp
+             = ~e_resp.602
+       KEi_rekey
+             = x.1199^inv((~e_resp.602*x.1200))
+       z     = x.1199^inv(x.1200)
+    
+    5. ~e_resp
+             = ~e_resp.602
+       KEi_rekey
+             = x.1199^(x.1200*inv(~e_resp.602))
+       z     = x.1199^x.1200
+    
+    6. ~e_resp
+             = ~e_resp.603
+       KEi_rekey
+             = x.1200^(x.1201*inv((~e_resp.603*x.1202)))
+       z     = x.1200^(x.1201*inv(x.1202))
+    
+    7. KEi_rekey
+             = DH_neutral
+       z     = DH_neutral
+  */
+
+rule (modulo E) IKE_REKEY_SA_COMPLETE_INIT:
+   [
+   !SecurityAssociation( 'initiator', 'original', $I, $R, SPI_init,
+                         SPI_resp, generatedKey,
+                         <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+   ),
+   In( <SPI_init, SPI_resp, 'REKEY_SA', 'msg4', 'flag_r', 
+        senc(<'REKEY_RESPONSE', newSPI_resp, n_resp, KEr_rekey>, SK_er), 
+        hmac(<'REKEY_RESPONSE', newSPI_resp, n_resp, KEr_rekey>, SK_ar)>
+   ),
+   REKEY_SA_RequestI( $I, $R, n_init,
+                      <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>, e_init,
+                      newSPI_init
+   )
+   ]
+  --[
+  REKEY_SA_CompleteI( $I, $R,
+                      <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>,
+                      <
+                       h(select(<h(<SK_d, KEr_rekey^e_init, n_init, n_resp>), n_init, 
+                                 n_resp, newSPI_init, newSPI_resp>,
+                                'd')), 
+                       h(select(<h(<SK_d, KEr_rekey^e_init, n_init, n_resp>), n_init, 
+                                 n_resp, newSPI_init, newSPI_resp>,
+                                'ai')), 
+                       h(select(<h(<SK_d, KEr_rekey^e_init, n_init, n_resp>), n_init, 
+                                 n_resp, newSPI_init, newSPI_resp>,
+                                'ar')), 
+                       h(select(<h(<SK_d, KEr_rekey^e_init, n_init, n_resp>), n_init, 
+                                 n_resp, newSPI_init, newSPI_resp>,
+                                'ei')), 
+                       h(select(<h(<SK_d, KEr_rekey^e_init, n_init, n_resp>), n_init, 
+                                 n_resp, newSPI_init, newSPI_resp>,
+                                'er'))
+                      >,
+                      newSPI_init, newSPI_resp, n_init, n_resp
+  ),
+  NewKeysMade( $I, $R,
+               h(select(<h(<SK_d, KEr_rekey^e_init, n_init, n_resp>), n_init, 
+                         n_resp, newSPI_init, newSPI_resp>,
+                        'd')),
+               h(select(<h(<SK_d, KEr_rekey^e_init, n_init, n_resp>), n_init, 
+                         n_resp, newSPI_init, newSPI_resp>,
+                        'ai')),
+               h(select(<h(<SK_d, KEr_rekey^e_init, n_init, n_resp>), n_init, 
+                         n_resp, newSPI_init, newSPI_resp>,
+                        'ar')),
+               h(select(<h(<SK_d, KEr_rekey^e_init, n_init, n_resp>), n_init, 
+                         n_resp, newSPI_init, newSPI_resp>,
+                        'ei')),
+               h(select(<h(<SK_d, KEr_rekey^e_init, n_init, n_resp>), n_init, 
+                         n_resp, newSPI_init, newSPI_resp>,
+                        'er'))
+  )
+  ]->
+   [
+   !RekeyedSecurityAssociation( 'initiator', 'rekeyed', $I, $R,
+                                newSPI_init, newSPI_resp,
+                                <h(<SK_d, KEr_rekey^e_init, n_init, n_resp>), n_init, n_resp, 
+                                 newSPI_init, newSPI_resp>,
+                                <
+                                 h(select(<h(<SK_d, KEr_rekey^e_init, n_init, n_resp>), n_init, 
+                                           n_resp, newSPI_init, newSPI_resp>,
+                                          'd')), 
+                                 h(select(<h(<SK_d, KEr_rekey^e_init, n_init, n_resp>), n_init, 
+                                           n_resp, newSPI_init, newSPI_resp>,
+                                          'ai')), 
+                                 h(select(<h(<SK_d, KEr_rekey^e_init, n_init, n_resp>), n_init, 
+                                           n_resp, newSPI_init, newSPI_resp>,
+                                          'ar')), 
+                                 h(select(<h(<SK_d, KEr_rekey^e_init, n_init, n_resp>), n_init, 
+                                           n_resp, newSPI_init, newSPI_resp>,
+                                          'ei')), 
+                                 h(select(<h(<SK_d, KEr_rekey^e_init, n_init, n_resp>), n_init, 
+                                           n_resp, newSPI_init, newSPI_resp>,
+                                          'er'))
+                                >
+   )
+   ]
+
+  /*
+  rule (modulo AC) IKE_REKEY_SA_COMPLETE_INIT:
+     [
+     !SecurityAssociation( 'initiator', 'original', $I, $R, SPI_init,
+                           SPI_resp, generatedKey,
+                           <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>
+     ),
+     In( <SPI_init, SPI_resp, 'REKEY_SA', 'msg4', 'flag_r', 
+          senc(<'REKEY_RESPONSE', newSPI_resp, n_resp, KEr_rekey>, SK_er), 
+          hmac(<'REKEY_RESPONSE', newSPI_resp, n_resp, KEr_rekey>, SK_ar)>
+     ),
+     REKEY_SA_RequestI( $I, $R, n_init,
+                        <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>, e_init,
+                        newSPI_init
+     )
+     ]
+    --[
+    REKEY_SA_CompleteI( $I, $R,
+                        <SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr>,
+                        <
+                         h(select(<h(<SK_d, z, n_init, n_resp>), n_init, n_resp, 
+                                   newSPI_init, newSPI_resp>,
+                                  'd')), 
+                         h(select(<h(<SK_d, z, n_init, n_resp>), n_init, n_resp, 
+                                   newSPI_init, newSPI_resp>,
+                                  'ai')), 
+                         h(select(<h(<SK_d, z, n_init, n_resp>), n_init, n_resp, 
+                                   newSPI_init, newSPI_resp>,
+                                  'ar')), 
+                         h(select(<h(<SK_d, z, n_init, n_resp>), n_init, n_resp, 
+                                   newSPI_init, newSPI_resp>,
+                                  'ei')), 
+                         h(select(<h(<SK_d, z, n_init, n_resp>), n_init, n_resp, 
+                                   newSPI_init, newSPI_resp>,
+                                  'er'))
+                        >,
+                        newSPI_init, newSPI_resp, n_init, n_resp
+    ),
+    NewKeysMade( $I, $R,
+                 h(select(<h(<SK_d, z, n_init, n_resp>), n_init, n_resp, 
+                           newSPI_init, newSPI_resp>,
+                          'd')),
+                 h(select(<h(<SK_d, z, n_init, n_resp>), n_init, n_resp, 
+                           newSPI_init, newSPI_resp>,
+                          'ai')),
+                 h(select(<h(<SK_d, z, n_init, n_resp>), n_init, n_resp, 
+                           newSPI_init, newSPI_resp>,
+                          'ar')),
+                 h(select(<h(<SK_d, z, n_init, n_resp>), n_init, n_resp, 
+                           newSPI_init, newSPI_resp>,
+                          'ei')),
+                 h(select(<h(<SK_d, z, n_init, n_resp>), n_init, n_resp, 
+                           newSPI_init, newSPI_resp>,
+                          'er'))
+    )
+    ]->
+     [
+     !RekeyedSecurityAssociation( 'initiator', 'rekeyed', $I, $R,
+                                  newSPI_init, newSPI_resp,
+                                  <h(<SK_d, z, n_init, n_resp>), n_init, n_resp, newSPI_init, 
+                                   newSPI_resp>,
+                                  <
+                                   h(select(<h(<SK_d, z, n_init, n_resp>), n_init, n_resp, 
+                                             newSPI_init, newSPI_resp>,
+                                            'd')), 
+                                   h(select(<h(<SK_d, z, n_init, n_resp>), n_init, n_resp, 
+                                             newSPI_init, newSPI_resp>,
+                                            'ai')), 
+                                   h(select(<h(<SK_d, z, n_init, n_resp>), n_init, n_resp, 
+                                             newSPI_init, newSPI_resp>,
+                                            'ar')), 
+                                   h(select(<h(<SK_d, z, n_init, n_resp>), n_init, n_resp, 
+                                             newSPI_init, newSPI_resp>,
+                                            'ei')), 
+                                   h(select(<h(<SK_d, z, n_init, n_resp>), n_init, n_resp, 
+                                             newSPI_init, newSPI_resp>,
+                                            'er'))
+                                  >
+     )
+     ]
+    variants (modulo AC)
+     1. KEr_rekey
+              = KEr_rekey.28
+        e_init
+              = one
+        z     = KEr_rekey.28
+    
+     2. KEr_rekey
+              = KEr_rekey.38
+        e_init
+              = e_init.48
+        z     = KEr_rekey.38^e_init.48
+    
+     3. KEr_rekey
+              = DH_neutral
+        z     = DH_neutral
+    
+     4. KEr_rekey
+              = x.30^(x.31*x.32)
+        e_init
+              = inv(x.31)
+        z     = x.30^x.32
+    
+     5. KEr_rekey
+              = x.31^(x.32*x.33*inv(x.34))
+        e_init
+              = (x.34*inv(x.32))
+        z     = x.31^x.33
+    
+     6. KEr_rekey
+              = x.31^(x.32*inv((x.33*x.34)))
+        e_init
+              = (x.33*inv(x.32))
+        z     = x.31^inv(x.34)
+    
+     7. KEr_rekey
+              = x.32^(x.33*x.34*inv((x.35*x.36)))
+        e_init
+              = (x.35*inv(x.33))
+        z     = x.32^(x.34*inv(x.36))
+    
+     8. KEr_rekey
+              = x.39^x.40
+        e_init
+              = inv((x.40*x.50))
+        z     = x.39^inv(x.50)
+    
+     9. KEr_rekey
+              = x.39^x.40
+        e_init
+              = (x.50*inv(x.40))
+        z     = x.39^x.50
+    
+    10. KEr_rekey
+              = x.39^inv(x.40)
+        e_init
+              = inv(x.50)
+        z     = x.39^inv((x.40*x.50))
+    
+    11. KEr_rekey
+              = x.39^inv(x.40)
+        e_init
+              = (x.40*x.50)
+        z     = x.39^x.50
+    
+    12. KEr_rekey
+              = x.40^x.41
+        e_init
+              = (x.51*inv((x.41*x.52)))
+        z     = x.40^(x.51*inv(x.52))
+    
+    13. KEr_rekey
+              = x.40^inv(x.41)
+        e_init
+              = (x.51*inv(x.52))
+        z     = x.40^(x.51*inv((x.41*x.52)))
+    
+    14. KEr_rekey
+              = x.40^inv((x.41*x.42))
+        e_init
+              = (x.41*x.52)
+        z     = x.40^(x.52*inv(x.42))
+    
+    15. KEr_rekey
+              = x.40^inv((x.41*x.42))
+        e_init
+              = (x.41*inv(x.52))
+        z     = x.40^inv((x.42*x.52))
+    
+    16. KEr_rekey
+              = x.40^(x.41*x.42)
+        e_init
+              = inv((x.41*x.52))
+        z     = x.40^(x.42*inv(x.52))
+    
+    17. KEr_rekey
+              = x.40^(x.41*x.42)
+        e_init
+              = (x.52*inv(x.41))
+        z     = x.40^(x.42*x.52)
+    
+    18. KEr_rekey
+              = x.40^(x.41*inv(x.42))
+        e_init
+              = inv(x.52)
+        z     = x.40^(x.41*inv((x.42*x.52)))
+    
+    19. KEr_rekey
+              = x.40^(x.41*inv(x.42))
+        e_init
+              = inv((x.41*x.52))
+        z     = x.40^inv((x.42*x.52))
+    
+    20. KEr_rekey
+              = x.40^(x.41*inv(x.42))
+        e_init
+              = (x.42*x.52)
+        z     = x.40^(x.41*x.52)
+    
+    21. KEr_rekey
+              = x.40^(x.41*inv(x.42))
+        e_init
+              = (x.42*x.52*inv(x.41))
+        z     = x.40^x.52
+    
+    22. KEr_rekey
+              = x.40^(x.41*inv(x.42))
+        e_init
+              = (x.42*inv((x.41*x.52)))
+        z     = x.40^inv(x.52)
+    
+    23. KEr_rekey
+              = x.41^inv((x.42*x.43))
+        e_init
+              = (x.42*x.53*inv(x.54))
+        z     = x.41^(x.53*inv((x.43*x.54)))
+    
+    24. KEr_rekey
+              = x.41^(x.42*x.43)
+        e_init
+              = (x.53*inv((x.42*x.54)))
+        z     = x.41^(x.43*x.53*inv(x.54))
+    
+    25. KEr_rekey
+              = x.41^(x.42*x.43*inv(x.44))
+        e_init
+              = inv((x.42*x.54))
+        z     = x.41^(x.43*inv((x.44*x.54)))
+    
+    26. KEr_rekey
+              = x.41^(x.42*x.43*inv(x.44))
+        e_init
+              = (x.44*x.54*inv(x.42))
+        z     = x.41^(x.43*x.54)
+    
+    27. KEr_rekey
+              = x.41^(x.42*x.43*inv(x.44))
+        e_init
+              = (x.44*inv((x.42*x.54)))
+        z     = x.41^(x.43*inv(x.54))
+    
+    28. KEr_rekey
+              = x.41^(x.42*inv(x.43))
+        e_init
+              = (x.43*x.53*inv((x.42*x.54)))
+        z     = x.41^(x.53*inv(x.54))
+    
+    29. KEr_rekey
+              = x.41^(x.42*inv(x.43))
+        e_init
+              = (x.53*inv(x.54))
+        z     = x.41^(x.42*x.53*inv((x.43*x.54)))
+    
+    30. KEr_rekey
+              = x.41^(x.42*inv(x.43))
+        e_init
+              = (x.53*inv((x.42*x.54)))
+        z     = x.41^(x.53*inv((x.43*x.54)))
+    
+    31. KEr_rekey
+              = x.41^(x.42*inv((x.43*x.44)))
+        e_init
+              = (x.43*x.54)
+        z     = x.41^(x.42*x.54*inv(x.44))
+    
+    32. KEr_rekey
+              = x.41^(x.42*inv((x.43*x.44)))
+        e_init
+              = (x.43*x.54*inv(x.42))
+        z     = x.41^(x.54*inv(x.44))
+    
+    33. KEr_rekey
+              = x.41^(x.42*inv((x.43*x.44)))
+        e_init
+              = (x.43*inv(x.54))
+        z     = x.41^(x.42*inv((x.44*x.54)))
+    
+    34. KEr_rekey
+              = x.41^(x.42*inv((x.43*x.44)))
+        e_init
+              = (x.43*inv((x.42*x.54)))
+        z     = x.41^inv((x.44*x.54))
+    
+    35. KEr_rekey
+              = x.42^(x.43*x.44*inv(x.45))
+        e_init
+              = (x.45*x.55*inv((x.43*x.56)))
+        z     = x.42^(x.44*x.55*inv(x.56))
+    
+    36. KEr_rekey
+              = x.42^(x.43*x.44*inv(x.45))
+        e_init
+              = (x.55*inv((x.43*x.56)))
+        z     = x.42^(x.44*x.55*inv((x.45*x.56)))
+    
+    37. KEr_rekey
+              = x.42^(x.43*x.44*inv((x.45*x.46)))
+        e_init
+              = (x.45*x.56*inv(x.43))
+        z     = x.42^(x.44*x.56*inv(x.46))
+    
+    38. KEr_rekey
+              = x.42^(x.43*x.44*inv((x.45*x.46)))
+        e_init
+              = (x.45*inv((x.43*x.56)))
+        z     = x.42^(x.44*inv((x.46*x.56)))
+    
+    39. KEr_rekey
+              = x.42^(x.43*inv((x.44*x.45)))
+        e_init
+              = (x.44*x.55*inv(x.56))
+        z     = x.42^(x.43*x.55*inv((x.45*x.56)))
+    
+    40. KEr_rekey
+              = x.42^(x.43*inv((x.44*x.45)))
+        e_init
+              = (x.44*x.55*inv((x.43*x.56)))
+        z     = x.42^(x.55*inv((x.45*x.56)))
+    
+    41. KEr_rekey
+              = x.43^(x.44*x.45*inv((x.46*x.47)))
+        e_init
+              = (x.46*x.57*inv((x.44*x.58)))
+        z     = x.43^(x.45*x.57*inv((x.47*x.58)))
+    
+    42. KEr_rekey
+              = z.54^inv(e_init.41)
+        e_init
+              = e_init.41
+        z     = z.54
+    
+    43. KEr_rekey
+              = z.95^x.163
+        e_init
+              = inv(x.163)
+        z     = z.95
+    
+    44. KEr_rekey
+              = z.96^(x.164*inv(x.165))
+        e_init
+              = (x.165*inv(x.164))
+        z     = z.96
+    
+    45. KEr_rekey
+              = x.461^x.462
+        e_init
+              = e_init.238
+        z     = x.461^(e_init.238*x.462)
+    
+    46. KEr_rekey
+              = x.461^(x.462*inv(e_init.238))
+        e_init
+              = e_init.238
+        z     = x.461^x.462
+    
+    47. KEr_rekey
+              = x.462^inv((e_init.239*x.464))
+        e_init
+              = e_init.239
+        z     = x.462^inv(x.464)
+    
+    48. KEr_rekey
+              = x.463^(x.464*inv((e_init.240*x.466)))
+        e_init
+              = e_init.240
+        z     = x.463^(x.464*inv(x.466))
+  */
+
+lemma secrecy_IR_keys_SK_d:
+  all-traces
+  "∀ I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+    (KeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr
+     ) @ #i) ⇒
+    (¬(∃ #j. K( SK_d ) @ #j))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+  (KeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr
+   ) @ #i)
+ ∧
+  ∃ #j. (K( SK_d ) @ #j)"
+*/
+by sorry
+
+lemma secrecy_IR_keys_SK_ai:
+  all-traces
+  "∀ I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+    (KeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr
+     ) @ #i) ⇒
+    (¬(∃ #j. K( SK_ai ) @ #j))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+  (KeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr
+   ) @ #i)
+ ∧
+  ∃ #j. (K( SK_ai ) @ #j)"
+*/
+by sorry
+
+lemma secrecy_IR_keys_SK_ar:
+  all-traces
+  "∀ I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+    (KeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr
+     ) @ #i) ⇒
+    (¬(∃ #j. K( SK_ar ) @ #j))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+  (KeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr
+   ) @ #i)
+ ∧
+  ∃ #j. (K( SK_ar ) @ #j)"
+*/
+by sorry
+
+lemma secrecy_IR_keys_SK_ei:
+  all-traces
+  "∀ I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+    (KeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr
+     ) @ #i) ⇒
+    (¬(∃ #j. K( SK_er ) @ #j))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+  (KeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr
+   ) @ #i)
+ ∧
+  ∃ #j. (K( SK_er ) @ #j)"
+*/
+by sorry
+
+lemma secrecy_IR_keys_SK_er:
+  all-traces
+  "∀ I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+    (KeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr
+     ) @ #i) ⇒
+    (¬(∃ #j. K( SK_er ) @ #j))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+  (KeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr
+   ) @ #i)
+ ∧
+  ∃ #j. (K( SK_er ) @ #j)"
+*/
+by sorry
+
+lemma secrecy_IR_keys_SK_pi:
+  all-traces
+  "∀ I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+    (KeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr
+     ) @ #i) ⇒
+    (¬(∃ #j. K( SK_pi ) @ #j))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+  (KeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr
+   ) @ #i)
+ ∧
+  ∃ #j. (K( SK_pi ) @ #j)"
+*/
+by sorry
+
+lemma secrecy_IR_keys_SK_pr:
+  all-traces
+  "∀ I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+    (KeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr
+     ) @ #i) ⇒
+    (¬(∃ #j. K( SK_d ) @ #j))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+  (KeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr
+   ) @ #i)
+ ∧
+  ∃ #j. (K( SK_d ) @ #j)"
+*/
+by sorry
+
+lemma secrecy_IR_new_keys_SK_d:
+  all-traces
+  "∀ I R SK_d SK_ai SK_ar SK_ei SK_er #i.
+    (NewKeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @ #i) ⇒
+    (¬(∃ #j. K( SK_d ) @ #j))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ I R SK_d SK_ai SK_ar SK_ei SK_er #i.
+  (NewKeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @ #i)
+ ∧
+  ∃ #j. (K( SK_d ) @ #j)"
+*/
+by sorry
+
+lemma secrecy_IR_new_keys_SK_ai:
+  all-traces
+  "∀ I R SK_d SK_ai SK_ar SK_ei SK_er #i.
+    (NewKeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @ #i) ⇒
+    (¬(∃ #j. K( SK_ai ) @ #j))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ I R SK_d SK_ai SK_ar SK_ei SK_er #i.
+  (NewKeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @ #i)
+ ∧
+  ∃ #j. (K( SK_ai ) @ #j)"
+*/
+by sorry
+
+lemma secrecy_IR_new_keys_SK_ar:
+  all-traces
+  "∀ I R SK_d SK_ai SK_ar SK_ei SK_er #i.
+    (NewKeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @ #i) ⇒
+    (¬(∃ #j. K( SK_ar ) @ #j))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ I R SK_d SK_ai SK_ar SK_ei SK_er #i.
+  (NewKeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @ #i)
+ ∧
+  ∃ #j. (K( SK_ar ) @ #j)"
+*/
+by sorry
+
+lemma secrecy_IR_new_keys_SK_ei:
+  all-traces
+  "∀ I R SK_d SK_ai SK_ar SK_ei SK_er #i.
+    (NewKeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @ #i) ⇒
+    (¬(∃ #j. K( SK_er ) @ #j))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ I R SK_d SK_ai SK_ar SK_ei SK_er #i.
+  (NewKeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @ #i)
+ ∧
+  ∃ #j. (K( SK_er ) @ #j)"
+*/
+by sorry
+
+lemma secrecy_IR_new_keys_SK_er:
+  all-traces
+  "∀ I R SK_d SK_ai SK_ar SK_ei SK_er #i.
+    (NewKeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @ #i) ⇒
+    (¬(∃ #j. K( SK_er ) @ #j))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ I R SK_d SK_ai SK_ar SK_ei SK_er #i.
+  (NewKeysMade( I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @ #i)
+ ∧
+  ∃ #j. (K( SK_er ) @ #j)"
+*/
+by sorry
+
+lemma IKE_SA_existence:
+  exists-trace
+  "∃ spiI spiR nI nR I R Key #i #j.
+    ((IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #i) ∧
+     (IKE_SA_CompletedTightI( spiI, spiR, nI, nR, I, R, Key ) @ #j)) ∧
+    (#i < #j)"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ spiI spiR nI nR I R Key #i #j.
+  (IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #i) ∧
+  (IKE_SA_CompletedTightI( spiI, spiR, nI, nR, I, R, Key ) @ #j)
+ ∧
+  #i < #j"
+*/
+by sorry
+
+lemma IKE_SA_aliveness [use_induction]:
+  all-traces
+  "∀ A B keymat #i.
+    (IKE_SA_AlivenessAgentA( A, B, keymat ) @ #i) ⇒
+    (∃ keymat2 #j.
+      (IKE_SA_AlivenessAgentB( B, keymat2 ) @ #j) ∧ (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ A B keymat #i.
+  (IKE_SA_AlivenessAgentA( A, B, keymat ) @ #i)
+ ∧
+  ∀ keymat2 #j.
+   (IKE_SA_AlivenessAgentB( B, keymat2 ) @ #j) ⇒ ¬(#j < #i)"
+*/
+by sorry
+
+lemma IKE_SA_weak_agreement_I [use_induction]:
+  all-traces
+  "∀ spiI spiR nI nR I R Key #i.
+    (IKE_SA_CompletedTightI( spiI, spiR, nI, nR, I, R, Key ) @ #i) ⇒
+    (∃ spiI2 spiR2 nI2 nR2 I.1 R.1 Key2 #j.
+      (IKE_SA_CompletedTightR( spiI2, spiR2, nI2, nR2, I.1, R.1, Key2
+       ) @ #j) ∧
+      (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR nI nR I R Key #i.
+  (IKE_SA_CompletedTightI( spiI, spiR, nI, nR, I, R, Key ) @ #i)
+ ∧
+  ∀ spiI2 spiR2 nI2 nR2 I.1 R.1 Key2 #j.
+   (IKE_SA_CompletedTightR( spiI2, spiR2, nI2, nR2, I.1, R.1, Key2
+    ) @ #j)
+  ⇒
+   ¬(#j < #i)"
+*/
+by sorry
+
+lemma IKE_SA_weak_agreement_R [use_induction]:
+  all-traces
+  "∀ spiI spiR nI nR I R Key #i.
+    (IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #i) ⇒
+    (∃ spiI2 spiR2 ni2 nr2 keymat2 #j.
+      (IKE_SA_WeakAgreementI( spiI2, spiR2, ni2, nr2, I, R, keymat2
+       ) @ #j) ∧
+      (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR nI nR I R Key #i.
+  (IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #i)
+ ∧
+  ∀ spiI2 spiR2 ni2 nr2 keymat2 #j.
+   (IKE_SA_WeakAgreementI( spiI2, spiR2, ni2, nr2, I, R, keymat2
+    ) @ #j)
+  ⇒
+   ¬(#j < #i)"
+*/
+by sorry
+
+lemma IKE_SA_non_injective_agreement_I [use_induction]:
+  all-traces
+  "∀ spiI spiR nI nR I R Key #i.
+    (IKE_SA_CompletedTightI( spiI, spiR, nI, nR, I, R, Key ) @ #i) ⇒
+    (∃ #j.
+      (IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #j) ∧
+      (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR nI nR I R Key #i.
+  (IKE_SA_CompletedTightI( spiI, spiR, nI, nR, I, R, Key ) @ #i)
+ ∧
+  ∀ #j.
+   (IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #j)
+  ⇒
+   ¬(#j < #i)"
+*/
+by sorry
+
+lemma IKE_SA_non_injective_agreement_R [use_induction]:
+  all-traces
+  "∀ spiI spiR nI nR I R Key #i.
+    (IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #i) ⇒
+    (∃ #j.
+      (IKE_SA_WeakAgreementI( spiI, spiR, nI, nR, I, R, Key ) @ #j) ∧
+      (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR nI nR I R Key #i.
+  (IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #i)
+ ∧
+  ∀ #j.
+   (IKE_SA_WeakAgreementI( spiI, spiR, nI, nR, I, R, Key ) @ #j)
+  ⇒
+   ¬(#j < #i)"
+*/
+by sorry
+
+lemma IKE_SA_injective_agreement_I [use_induction]:
+  all-traces
+  "∀ spiI spiR nI nR I R Key #i #j #k.
+    ((((IKE_SA_CompletedTightI( spiI, spiR, nI, nR, I, R, Key ) @ #i) ∧
+       (IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #j)) ∧
+      (#j < #i)) ∧
+     (IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #k)) ⇒
+    (#j = #k)"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR nI nR I R Key #i #j #k.
+  (IKE_SA_CompletedTightI( spiI, spiR, nI, nR, I, R, Key ) @ #i) ∧
+  (IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #j) ∧
+  (IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #k)
+ ∧
+  (#j < #i) ∧ (¬(#j = #k))"
+*/
+by sorry
+
+lemma IKE_SA_injective_agreement_I_v2:
+  all-traces
+  "∀ spiI spiR nI nR I R Key #i.
+    (IKE_SA_CompletedTightI( spiI, spiR, nI, nR, I, R, Key ) @ #i) ⇒
+    (∃ #j.
+      ((IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #j) ∧
+       (#j < #i)) ∧
+      (¬(∃ A2 B2 #i2.
+          (IKE_SA_CompletedTightI( spiI, spiR, nI, nR, A2, B2, Key ) @ #i2) ∧
+          (¬(#i2 = #i)))))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR nI nR I R Key #i.
+  (IKE_SA_CompletedTightI( spiI, spiR, nI, nR, I, R, Key ) @ #i)
+ ∧
+  ∀ #j.
+   (IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #j)
+  ⇒
+   ((¬(#j < #i)) ∨
+    (∃ A2 B2 #i2.
+      (IKE_SA_CompletedTightI( spiI, spiR, nI, nR, A2, B2, Key ) @ #i2)
+     ∧
+      ¬(#i2 = #i)))"
+*/
+by sorry
+
+lemma IKE_SA_injective_agreement_R [use_induction]:
+  all-traces
+  "∀ spiI spiR nI nR I R Key #i #j #k.
+    ((((IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #i) ∧
+       (IKE_SA_WeakAgreementI( spiI, spiR, nI, nR, I, R, Key ) @ #j)) ∧
+      (#j < #i)) ∧
+     (IKE_SA_WeakAgreementI( spiI, spiR, nI, nR, I, R, Key ) @ #k)) ⇒
+    (#j = #k)"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR nI nR I R Key #i #j #k.
+  (IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #i) ∧
+  (IKE_SA_WeakAgreementI( spiI, spiR, nI, nR, I, R, Key ) @ #j) ∧
+  (IKE_SA_WeakAgreementI( spiI, spiR, nI, nR, I, R, Key ) @ #k)
+ ∧
+  (#j < #i) ∧ (¬(#j = #k))"
+*/
+by sorry
+
+lemma IKE_SA_injective_agreement_R_v2:
+  all-traces
+  "∀ spiI spiR nI nR I R Key #i.
+    (IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #i) ⇒
+    (∃ #j.
+      ((IKE_SA_WeakAgreementI( spiI, spiR, nI, nR, I, R, Key ) @ #j) ∧
+       (#j < #i)) ∧
+      (¬(∃ spiI1 spiR1 nI1 nR1 I1 R1 #i2.
+          (IKE_SA_WeakAgreementI( spiI1, spiR1, nI1, nR1, I1, R1, Key
+           ) @ #i2) ∧
+          (¬(#i2 = #j)))))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR nI nR I R Key #i.
+  (IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #i)
+ ∧
+  ∀ #j.
+   (IKE_SA_WeakAgreementI( spiI, spiR, nI, nR, I, R, Key ) @ #j)
+  ⇒
+   ((¬(#j < #i)) ∨
+    (∃ spiI1 spiR1 nI1 nR1 I1 R1 #i2.
+      (IKE_SA_WeakAgreementI( spiI1, spiR1, nI1, nR1, I1, R1, Key
+       ) @ #i2)
+     ∧
+      ¬(#i2 = #j)))"
+*/
+by sorry
+
+lemma InitialChild_existence:
+  exists-trace
+  "∃ spiI spiR I R key #i #j.
+    ((IKE_ChildSA_InitialR( spiI, spiR, I, R, key ) @ #j) ∧
+     (IKE_ChildSA_InitialI( spiI, spiR, I, R, key ) @ #i)) ∧
+    (#j < #i)"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ spiI spiR I R key #i #j.
+  (IKE_ChildSA_InitialR( spiI, spiR, I, R, key ) @ #j) ∧
+  (IKE_ChildSA_InitialI( spiI, spiR, I, R, key ) @ #i)
+ ∧
+  #j < #i"
+*/
+by sorry
+
+lemma InitialChild_aliveness_I [use_induction]:
+  all-traces
+  "∀ spiI spiR I R key #i.
+    (IKE_ChildSA_InitialI( spiI, spiR, I, R, key ) @ #i) ⇒
+    ((∃ spiI1 spiR1 I1 key1 #j.
+       (IKE_ChildSA_InitialI( spiI1, spiR1, R, I1, key1 ) @ #j) ∧
+       (#j < #i)) ∨
+     (∃ spiI1 spiR1 I1 key1 #j.
+       (IKE_ChildSA_InitialR( spiI1, spiR1, I1, R, key1 ) @ #j) ∧
+       (#j < #i)))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR I R key #i.
+  (IKE_ChildSA_InitialI( spiI, spiR, I, R, key ) @ #i)
+ ∧
+  (∀ spiI1 spiR1 I1 key1 #j.
+    (IKE_ChildSA_InitialI( spiI1, spiR1, R, I1, key1 ) @ #j)
+   ⇒
+    ¬(#j < #i)) ∧
+  (∀ spiI1 spiR1 I1 key1 #j.
+    (IKE_ChildSA_InitialR( spiI1, spiR1, I1, R, key1 ) @ #j)
+   ⇒
+    ¬(#j < #i))"
+*/
+by sorry
+
+lemma InitialChild_aliveness_R [use_induction]:
+  all-traces
+  "∀ spiI spiR I R key #i.
+    (IKE_ChildSA_InitialR( spiI, spiR, I, R, key ) @ #i) ⇒
+    (∃ keymat2 #j.
+      (IKE_SA_AlivenessAgentB( I, keymat2 ) @ #j) ∧ (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR I R key #i.
+  (IKE_ChildSA_InitialR( spiI, spiR, I, R, key ) @ #i)
+ ∧
+  ∀ keymat2 #j.
+   (IKE_SA_AlivenessAgentB( I, keymat2 ) @ #j) ⇒ ¬(#j < #i)"
+*/
+by sorry
+
+lemma InitialChild_weak_agreement_I [use_induction]:
+  all-traces
+  "∀ spiI spiR I R key #i.
+    (IKE_ChildSA_InitialI( spiI, spiR, I, R, key ) @ #i) ⇒
+    (∃ spiI1 spiR1 key1 #j.
+      (IKE_ChildSA_InitialR( spiI1, spiR1, I, R, key1 ) @ #j) ∧
+      (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR I R key #i.
+  (IKE_ChildSA_InitialI( spiI, spiR, I, R, key ) @ #i)
+ ∧
+  ∀ spiI1 spiR1 key1 #j.
+   (IKE_ChildSA_InitialR( spiI1, spiR1, I, R, key1 ) @ #j)
+  ⇒
+   ¬(#j < #i)"
+*/
+by sorry
+
+lemma InitialChild_weak_agreement_R [use_induction]:
+  all-traces
+  "∀ spiI spiR I R key #i.
+    (IKE_ChildSA_InitialR( spiI, spiR, I, R, key ) @ #i) ⇒
+    (∃ spiI1 Key1 #j.
+      (IKE_SA_InitialChildPriorI( spiI1, I, R, Key1 ) @ #j) ∧ (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR I R key #i.
+  (IKE_ChildSA_InitialR( spiI, spiR, I, R, key ) @ #i)
+ ∧
+  ∀ spiI1 Key1 #j.
+   (IKE_SA_InitialChildPriorI( spiI1, I, R, Key1 ) @ #j) ⇒ ¬(#j < #i)"
+*/
+by sorry
+
+lemma Initial_child_non_injective_agreement_I_partial [use_induction]:
+  all-traces
+  "∀ spiI spiR I R Key #i.
+    (IKE_ChildSA_InitialI( spiI, spiR, I, R, Key ) @ #i) ⇒
+    (∃ spiI1 spiR1 #j.
+      (IKE_ChildSA_InitialR( spiI1, spiR1, I, R, Key ) @ #j) ∧
+      (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR I R Key #i.
+  (IKE_ChildSA_InitialI( spiI, spiR, I, R, Key ) @ #i)
+ ∧
+  ∀ spiI1 spiR1 #j.
+   (IKE_ChildSA_InitialR( spiI1, spiR1, I, R, Key ) @ #j)
+  ⇒
+   ¬(#j < #i)"
+*/
+by sorry
+
+lemma Initial_child_non_injective_agreement_R_partial [use_induction]:
+  all-traces
+  "∀ spiI spiR I R Key #i.
+    (IKE_ChildSA_InitialR( spiI, spiR, I, R, Key ) @ #i) ⇒
+    (∃ spiI1 #j.
+      (IKE_SA_InitialChildPriorI( spiI1, I, R, Key ) @ #j) ∧ (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR I R Key #i.
+  (IKE_ChildSA_InitialR( spiI, spiR, I, R, Key ) @ #i)
+ ∧
+  ∀ spiI1 #j.
+   (IKE_SA_InitialChildPriorI( spiI1, I, R, Key ) @ #j) ⇒ ¬(#j < #i)"
+*/
+by sorry
+
+lemma Initial_child_non_injective_agreement_I_counterexample:
+  exists-trace
+  "∃ spiI spiR spiI1 spiR1 I R Key #i #j.
+    ((((IKE_ChildSA_InitialI( spiI, spiR, I, R, Key ) @ #i) ∧
+       (IKE_ChildSA_InitialR( spiI1, spiR1, I, R, Key ) @ #j)) ∧
+      (#j < #i)) ∧
+     (¬(spiI = spiI1))) ∧
+    (¬(spiR = spiR1))"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ spiI spiR spiI1 spiR1 I R Key #i #j.
+  (IKE_ChildSA_InitialI( spiI, spiR, I, R, Key ) @ #i) ∧
+  (IKE_ChildSA_InitialR( spiI1, spiR1, I, R, Key ) @ #j)
+ ∧
+  (#j < #i) ∧ (¬(spiI = spiI1)) ∧ (¬(spiR = spiR1))"
+*/
+by sorry
+
+lemma Initial_child_non_injective_agreement_R_counterexample:
+  exists-trace
+  "∃ spiI spiR spiI1 I R Key #i #j #k.
+    ((((IKE_ChildSA_InitialR( spiI, spiR, I, R, Key ) @ #i) ∧
+       (IKE_SA_InitialChildPriorI( spiI1, I, R, Key ) @ #j)) ∧
+      (#j < #i)) ∧
+     (K( spiI ) @ #k)) ∧
+    (¬(spiI1 = spiI))"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ spiI spiR spiI1 I R Key #i #j #k.
+  (IKE_ChildSA_InitialR( spiI, spiR, I, R, Key ) @ #i) ∧
+  (IKE_SA_InitialChildPriorI( spiI1, I, R, Key ) @ #j) ∧
+  (K( spiI ) @ #k)
+ ∧
+  (#j < #i) ∧ (¬(spiI1 = spiI))"
+*/
+simplify
+solve( StateInitR( $I, $R, SPI_init, SPI_resp, n_init, n_resp,
+                   <prf(<n_init, n_resp>, z), n_init, n_resp, SPI_init.1, SPI_resp.1>,
+                   msg1, msg2
+       ) ▶₂ #i )
+  case IKE_SA_INIT_R
+  solve( !Agent( $R, ID_resp ) ▶₁ #i )
+    case enrol_agent
+    solve( !Resp_PSK( $R, $I, ID_init, ~ID, psk ) ▶₃ #i )
+      case generate_psk
+      solve( !Resp_PPK( $R, $I, id_ppk, ppk ) ▶₄ #i )
+        case generate_ppk
+        solve( !Agent( $I, ID_init ) ▶₁ #j )
+          case enrol_agent
+          solve( StateInitI( $I, $R, SPI_init, e_init, n_init, msg1 ) ▶₂ #j )
+            case IKE_SA_INIT_I
+            solve( !Init_PSK( $I, $R, ~ID, ID_resp, psk.1 ) ▶₃ #j )
+              case generate_psk
+              solve( !KU( senc(<~ID, 
+                                h(<h(<~psk, 'KeyPadforIKEv2'>), 
+                                   <~SPI_init, 'IKE_SA_INIT', 'msg1', 'flag_i', KEi, ~n_init, 
+                                    'USE_PPK'>, 
+                                   ~n_resp, 
+                                   hmac(~ID,
+                                        prf(~ppk,
+                                            <
+                                             h(select(<prf(<~n_init, ~n_resp>, z), ~n_init, 
+                                                       ~n_resp, ~SPI_init, ~SPI_resp>,
+                                                      'pi')), 
+                                             '0x01'>))
+                                  >), 
+                                spiI, 'notify_initial_contact', 'ppk_identity', ~id_ppk>,
+                               h(select(<prf(<~n_init, ~n_resp>, z), ~n_init, ~n_resp, ~SPI_init, 
+                                         ~SPI_resp>,
+                                        'ei')))
+                     ) @ #vk.17 )
+                case IKE_AUTH_I
+                by contradiction /* from formulas */
+              next
+                case c_senc
+                solve( !KU( ~id_ppk ) @ #vk.45 )
+                  case IKE_AUTH_I
+                  solve( !KU( hmac(<~ID, 
+                                    h(<h(<~psk, 'KeyPadforIKEv2'>), 
+                                       <~SPI_init, 'IKE_SA_INIT', 'msg1', 'flag_i', KEi, ~n_init, 
+                                        'USE_PPK'>, 
+                                       ~n_resp, 
+                                       hmac(~ID,
+                                            prf(~ppk,
+                                                <
+                                                 h(select(<prf(<~n_init, ~n_resp>, z), ~n_init, 
+                                                           ~n_resp, ~SPI_init, ~SPI_resp>,
+                                                          'pi')), 
+                                                 '0x01'>))
+                                      >), 
+                                    spiI, 'notify_initial_contact', 'ppk_identity', ~id_ppk>,
+                                   h(select(<prf(<~n_init, ~n_resp>, z), ~n_init, ~n_resp, 
+                                             ~SPI_init, ~SPI_resp>,
+                                            'ai')))
+                         ) @ #vk.19 )
+                    case IKE_AUTH_I
+                    by contradiction /* from formulas */
+                  next
+                    case c_hmac
+                    solve( !KU( h(select(<prf(<~n_init, ~n_resp>, z), ~n_init, 
+                                          ~n_resp, ~SPI_init, ~SPI_resp>,
+                                         'ei'))
+                           ) @ #vk.47 )
+                      case c_h
+                      solve( !KU( h(<h(<~psk, 'KeyPadforIKEv2'>), 
+                                     <~SPI_init, 'IKE_SA_INIT', 'msg1', 'flag_i', KEi, ~n_init, 
+                                      'USE_PPK'>, 
+                                     ~n_resp, 
+                                     hmac(~ID,
+                                          prf(~ppk,
+                                              <
+                                               h(select(<prf(<~n_init, ~n_resp>, z), ~n_init, 
+                                                         ~n_resp, ~SPI_init, ~SPI_resp>,
+                                                        'pi')), 
+                                               '0x01'>))
+                                    >)
+                             ) @ #vk.50 )
+                        case IKE_AUTH_I
+                        solve( !KU( ~SPI_resp ) @ #vk.17 )
+                          case IKE_SA_INIT_R
+                          solve( !KU( h(select(<
+                                                prf(<~n_init, ~n_resp>, 'g'^(~e_init*~e_resp)), 
+                                                ~n_init, ~n_resp, ~SPI_init, ~SPI_resp>,
+                                               'ai'))
+                                 ) @ #vk.58 )
+                            case c_h
+                            solve( !KU( select(<
+                                                prf(<~n_init, ~n_resp>, 'g'^(~e_init*~e_resp)), 
+                                                ~n_init, ~n_resp, ~SPI_init, ~SPI_resp>,
+                                               'ei')
+                                   ) @ #vk.59 )
+                              case c_select
+                              solve( !KU( select(<
+                                                  prf(<~n_init, ~n_resp>, 'g'^(~e_init*~e_resp)), 
+                                                  ~n_init, ~n_resp, ~SPI_init, ~SPI_resp>,
+                                                 'ai')
+                                     ) @ #vk.63 )
+                                case c_select
+                                solve( !KU( prf(<~n_init, ~n_resp>, 'g'^(~e_init*~e_resp))
+                                       ) @ #vk.66 )
+                                  case c_prf
+                                  solve( !KU( 'g'^(~e_init*~e_resp) ) @ #vk.69 )
+                                    case IKE_SA_INIT_I
+                                    solve( !KU( ~e_resp ) @ #vk.70 )
+                                      case reveal_dh
+                                      solve( !KU( ~n_resp ) @ #vk.53 )
+                                        case IKE_SA_INIT_R
+                                        solve( !KU( ~SPI_init ) @ #vk.31 )
+                                          case IKE_SA_INIT_I
+                                          solve( !KU( 'g'^~e_resp ) @ #vk.54 )
+                                            case IKE_SA_INIT_R
+                                            solve( !KU( 'g'^~e_init ) @ #vk.41 )
+                                              case IKE_SA_INIT_I
+                                              solve( !KU( ~n_init ) @ #vk.60 )
+                                                case IKE_SA_INIT_I
+                                                solve( !KU( ~SPI_init.1 ) @ #vk.64 )
+                                                  case IKE_SA_INIT_I
+                                                  solve( !KU( ~ID ) @ #vk.62 )
+                                                    case IKE_AUTH_I
+                                                    solve( splitEqs(9) )
+                                                      case split_case_1
+                                                      solve( splitEqs(3) )
+                                                        case split_case_1
+                                                        solve( !KU( h(select(<
+                                                                              prf(<~n_init.1, 
+                                                                                   n_resp.1>,
+                                                                                  z), 
+                                                                              ~n_init.1, n_resp.1, 
+                                                                              ~SPI_init.1, 
+                                                                              SPI_resp.1>,
+                                                                             'ei'))
+                                                               ) @ #vk.75 )
+                                                          case c_h
+                                                          solve( !KU( z^inv(~e_init.1) ) @ #vk.74 )
+                                                            case c_exp
+                                                            solve( !KU( ~e_init.1 ) @ #vk.86 )
+                                                              case reveal_dh
+                                                              solve( !KU( select(<
+                                                                                  prf(<~n_init.1, 
+                                                                                       n_resp.1>,
+                                                                                      z), 
+                                                                                  ~n_init.1, 
+                                                                                  n_resp.1, 
+                                                                                  ~SPI_init.1, 
+                                                                                  SPI_resp.1>,
+                                                                                 'ei')
+                                                                     ) @ #vk.84 )
+                                                                case c_select
+                                                                solve( !KU( ~n_init.1 ) @ #vk.92 )
+                                                                  case IKE_SA_INIT_I
+                                                                  solve( !KU( prf(<~n_init.1, 
+                                                                                   n_resp.1>,
+                                                                                  z)
+                                                                         ) @ #vk.92 )
+                                                                    case c_prf
+                                                                    solve( !KU( ~SPI_init.2
+                                                                           ) @ #vk.88 )
+                                                                      case IKE_SA_INIT_I
+                                                                      solve( !KU( h(select(<
+                                                                                            prf(<
+                                                                                                 ~n_init.2, 
+                                                                                                 n_resp.2
+                                                                                                >,
+                                                                                                KEr^~e_init.2), 
+                                                                                            ~n_init.2, 
+                                                                                            n_resp.2, 
+                                                                                            ~SPI_init.2, 
+                                                                                            SPI_resp.2
+                                                                                           >,
+                                                                                           'ei'))
+                                                                             ) @ #vk.92 )
+                                                                        case c_h
+                                                                        solve( !KU( select(<
+                                                                                            prf(<
+                                                                                                 ~n_init.2, 
+                                                                                                 n_resp.2
+                                                                                                >,
+                                                                                                KEr^~e_init.2), 
+                                                                                            ~n_init.2, 
+                                                                                            n_resp.2, 
+                                                                                            ~SPI_init.2, 
+                                                                                            SPI_resp.2
+                                                                                           >,
+                                                                                           'ei')
+                                                                               ) @ #vk.94 )
+                                                                          case c_select
+                                                                          solve( !KU( prf(<
+                                                                                           ~n_init.2, 
+                                                                                           n_resp.2
+                                                                                          >,
+                                                                                          KEr^~e_init.2)
+                                                                                 ) @ #vk.98 )
+                                                                            case c_prf
+                                                                            solve( !KU( KEr^~e_init.2
+                                                                                   ) @ #vk.102 )
+                                                                              case IKE_SA_INIT_I
+                                                                              solve( !KU( ~n_init.2
+                                                                                     ) @ #vk.102 )
+                                                                                case IKE_SA_INIT_I
+                                                                                SOLVED // trace found
+                                                                              qed
+                                                                            next
+                                                                              case c_exp
+                                                                              by sorry
+                                                                            qed
+                                                                          qed
+                                                                        qed
+                                                                      qed
+                                                                    qed
+                                                                  qed
+                                                                qed
+                                                              qed
+                                                            qed
+                                                          qed
+                                                        qed
+                                                      next
+                                                        case split_case_2
+                                                        by sorry
+                                                      next
+                                                        case split_case_3
+                                                        by sorry
+                                                      next
+                                                        case split_case_4
+                                                        by sorry
+                                                      next
+                                                        case split_case_5
+                                                        by sorry
+                                                      next
+                                                        case split_case_6
+                                                        by sorry
+                                                      next
+                                                        case split_case_7
+                                                        by sorry
+                                                      qed
+                                                    next
+                                                      case split_case_2
+                                                      by sorry
+                                                    next
+                                                      case split_case_3
+                                                      by sorry
+                                                    next
+                                                      case split_case_4
+                                                      by sorry
+                                                    next
+                                                      case split_case_5
+                                                      by sorry
+                                                    next
+                                                      case split_case_6
+                                                      by sorry
+                                                    next
+                                                      case split_case_7
+                                                      by sorry
+                                                    qed
+                                                  next
+                                                    case IKE_AUTH_R
+                                                    by sorry
+                                                  qed
+                                                qed
+                                              qed
+                                            next
+                                              case c_exp
+                                              by sorry
+                                            qed
+                                          next
+                                            case c_exp
+                                            by sorry
+                                          qed
+                                        qed
+                                      qed
+                                    qed
+                                  next
+                                    case IKE_SA_INIT_R
+                                    by sorry
+                                  next
+                                    case c_exp
+                                    by sorry
+                                  qed
+                                qed
+                              qed
+                            qed
+                          qed
+                        qed
+                      next
+                        case c_h
+                        by sorry
+                      qed
+                    qed
+                  qed
+                qed
+              qed
+            qed
+          qed
+        qed
+      qed
+    qed
+  qed
+qed
+
+lemma Initial_child_injective_agreement_I_partial [use_induction]:
+  all-traces
+  "∀ spiI spiR I R Key #i.
+    (IKE_ChildSA_InitialI( spiI, spiR, I, R, Key ) @ #i) ⇒
+    (∃ spiI1 spiR1 #j.
+      ((IKE_ChildSA_InitialR( spiI1, spiR1, I, R, Key ) @ #j) ∧
+       (#j < #i)) ∧
+      (¬(∃ I1 R1 spiI2 spiR2 #l.
+          (IKE_ChildSA_InitialR( spiI2, spiR2, I1, R1, Key ) @ #l) ∧
+          (¬(#l = #j)))))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR I R Key #i.
+  (IKE_ChildSA_InitialI( spiI, spiR, I, R, Key ) @ #i)
+ ∧
+  ∀ spiI1 spiR1 #j.
+   (IKE_ChildSA_InitialR( spiI1, spiR1, I, R, Key ) @ #j)
+  ⇒
+   ((¬(#j < #i)) ∨
+    (∃ I1 R1 spiI2 spiR2 #l.
+      (IKE_ChildSA_InitialR( spiI2, spiR2, I1, R1, Key ) @ #l)
+     ∧
+      ¬(#l = #j)))"
+*/
+by sorry
+
+lemma Initial_child_injective_agreement_R_partial [use_induction]:
+  all-traces
+  "∀ spiI spiR I R Key #i.
+    (IKE_ChildSA_InitialR( spiI, spiR, I, R, Key ) @ #i) ⇒
+    (∃ spiI1 #j.
+      ((IKE_SA_InitialChildPriorI( spiI1, I, R, Key ) @ #j) ∧
+       (#j < #i)) ∧
+      (¬(∃ I1 R1 spiI2 #l.
+          (IKE_SA_InitialChildPriorI( spiI2, I1, R1, Key ) @ #l) ∧
+          (¬(#l = #j)))))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR I R Key #i.
+  (IKE_ChildSA_InitialR( spiI, spiR, I, R, Key ) @ #i)
+ ∧
+  ∀ spiI1 #j.
+   (IKE_SA_InitialChildPriorI( spiI1, I, R, Key ) @ #j)
+  ⇒
+   ((¬(#j < #i)) ∨
+    (∃ I1 R1 spiI2 #l.
+      (IKE_SA_InitialChildPriorI( spiI2, I1, R1, Key ) @ #l)
+     ∧
+      ¬(#l = #j)))"
+*/
+by sorry
+
+lemma Rekey_exists:
+  exists-trace
+  "∃ I R Keys newKeys spiI spiR ni nr #i #j.
+    (REKEY_SA_CompleteR( I, R, Keys, newKeys, spiI, spiR, ni, nr
+     ) @ #i) ∧
+    (REKEY_SA_CompleteI( I, R, Keys, newKeys, spiI, spiR, ni, nr
+     ) @ #j)"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ I R Keys newKeys spiI spiR ni nr #i #j.
+  (REKEY_SA_CompleteR( I, R, Keys, newKeys, spiI, spiR, ni, nr
+   ) @ #i) ∧
+  (REKEY_SA_CompleteI( I, R, Keys, newKeys, spiI, spiR, ni, nr
+   ) @ #j)"
+*/
+by sorry
+
+lemma Rekey_aliveness_I:
+  all-traces
+  "∀ I R Keys newKeys spiI spiR ni nr #i.
+    (REKEY_SA_CompleteI( I, R, Keys, newKeys, spiI, spiR, ni, nr
+     ) @ #i) ⇒
+    (∃ #j. (REKEY_Aliveness( R ) @ #j) ∧ (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ I R Keys newKeys spiI spiR ni nr #i.
+  (REKEY_SA_CompleteI( I, R, Keys, newKeys, spiI, spiR, ni, nr
+   ) @ #i)
+ ∧
+  ∀ #j. (REKEY_Aliveness( R ) @ #j) ⇒ ¬(#j < #i)"
+*/
+by sorry
+
+lemma Rekey_aliveness_R:
+  all-traces
+  "∀ I R Keys newKeys spiI spiR ni nr #i.
+    (REKEY_SA_CompleteR( I, R, Keys, newKeys, spiI, spiR, ni, nr
+     ) @ #i) ⇒
+    (∃ #j. (REKEY_Aliveness( I ) @ #j) ∧ (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ I R Keys newKeys spiI spiR ni nr #i.
+  (REKEY_SA_CompleteR( I, R, Keys, newKeys, spiI, spiR, ni, nr
+   ) @ #i)
+ ∧
+  ∀ #j. (REKEY_Aliveness( I ) @ #j) ⇒ ¬(#j < #i)"
+*/
+by sorry
+
+lemma CreateChild_exists:
+  exists-trace
+  "∃ spiI spiR newspiI newspiR nI nR I R Key childKey #i1 #i2 #j1
+     #j2.
+    ((((((IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key
+          ) @ #i1) ∧
+         (IKE_SA_CompletedTightI( spiI, spiR, nI, nR, I, R, Key ) @ #i2)) ∧
+        (#i1 < #i2)) ∧
+       (CreateChildSAR( I, R, Key, newspiI, newspiR, childKey ) @ #j1)) ∧
+      (CreateChildSAI( I, R, Key, newspiI, newspiR, childKey ) @ #j2)) ∧
+     (#i2 < #j1)) ∧
+    (#j1 < #j2)"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ spiI spiR newspiI newspiR nI nR I R Key childKey #i1 #i2 #j1
+   #j2.
+  (IKE_SA_CompletedTightR( spiI, spiR, nI, nR, I, R, Key ) @ #i1) ∧
+  (IKE_SA_CompletedTightI( spiI, spiR, nI, nR, I, R, Key ) @ #i2) ∧
+  (CreateChildSAR( I, R, Key, newspiI, newspiR, childKey ) @ #j1) ∧
+  (CreateChildSAI( I, R, Key, newspiI, newspiR, childKey ) @ #j2)
+ ∧
+  (#i1 < #i2) ∧ (#i2 < #j1) ∧ (#j1 < #j2)"
+*/
+by sorry
+
+lemma CreateChild_aliveness_I_aux:
+  all-traces
+  "∀ I R keymat newspiI #i3.
+    (ChildRequestI( I, R, keymat, newspiI ) @ #i3) ⇒
+    (∃ spiI spiR nI nR I.1 R.1 keys #i1 #i2.
+      (((IKE_SA_CompletedFullR( spiI, spiR, nI, nR, I.1, R.1, keymat,
+                                keys
+         ) @ #i1) ∧
+        (IKE_SA_CompletedFullI( spiI, spiR, nI, nR, I.1, R.1, keymat, keys
+         ) @ #i2)) ∧
+       (#i1 < #i2)) ∧
+      (#i2 < #i3))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ I R keymat newspiI #i3.
+  (ChildRequestI( I, R, keymat, newspiI ) @ #i3)
+ ∧
+  ∀ spiI spiR nI nR I.1 R.1 keys #i1 #i2.
+   (IKE_SA_CompletedFullR( spiI, spiR, nI, nR, I.1, R.1, keymat, keys
+    ) @ #i1) ∧
+   (IKE_SA_CompletedFullI( spiI, spiR, nI, nR, I.1, R.1, keymat, keys
+    ) @ #i2)
+  ⇒
+   ((¬(#i1 < #i2)) ∨ (¬(#i2 < #i3)))"
+*/
+by sorry
+
+lemma CreateChild_aliveness_I_simple:
+  all-traces
+  "∀ I R keymat newspiI newspiR childKey #i3 #j2.
+    (((ChildRequestI( I, R, keymat, newspiI ) @ #i3) ∧
+      (CreateChildSAI( I, R, keymat, newspiI, newspiR, childKey
+       ) @ #j2)) ∧
+     (#i3 < #j2)) ⇒
+    (∃ #j1.
+      ((CreateChildAliveness( R ) @ #j1) ∧ (#i3 < #j1)) ∧ (#j1 < #j2))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ I R keymat newspiI newspiR childKey #i3 #j2.
+  (ChildRequestI( I, R, keymat, newspiI ) @ #i3) ∧
+  (CreateChildSAI( I, R, keymat, newspiI, newspiR, childKey ) @ #j2)
+ ∧
+  (#i3 < #j2) ∧
+  (∀ #j1.
+    (CreateChildAliveness( R ) @ #j1)
+   ⇒
+    ((¬(#i3 < #j1)) ∨ (¬(#j1 < #j2))))"
+*/
+by sorry
+
+lemma CreateChild_aliveness_R_simple_Contrapositive:
+  exists-trace
+  "∃ spiI spiR nI nR I R keymat keys newspiI newspiR childKey #j #k.
+    (((IKE_SA_CompletedFullR( spiI, spiR, nI, nR, I, R, keymat, keys
+       ) @ #j) ∧
+      (CreateChildSAR( I, R, keymat, newspiI, newspiR, childKey
+       ) @ #k)) ∧
+     (#j < #k)) ∧
+    (¬(∃ #i. (CreateChildAliveness( I ) @ #i) ∧ (#i < #k)))"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ spiI spiR nI nR I R keymat keys newspiI newspiR childKey #j #k.
+  (IKE_SA_CompletedFullR( spiI, spiR, nI, nR, I, R, keymat, keys
+   ) @ #j) ∧
+  (CreateChildSAR( I, R, keymat, newspiI, newspiR, childKey ) @ #k)
+ ∧
+  (#j < #k) ∧ (∀ #i. (CreateChildAliveness( I ) @ #i) ⇒ ¬(#i < #k))"
+*/
+by sorry
+
+lemma CreateChild_aliveness_R_simple_Contrapositive_alt:
+  exists-trace
+  "∃ spiI spiR nI nR I R keymat keys newspiI newspiR childKey #j #k.
+    (((IKE_SA_CompletedFullI( spiI, spiR, nI, nR, I, R, keymat, keys
+       ) @ #j) ∧
+      (CreateChildSAR( I, R, keymat, newspiI, newspiR, childKey
+       ) @ #k)) ∧
+     (#j < #k)) ∧
+    (¬(∃ #i. (CreateChildAliveness( I ) @ #i) ∧ (#i < #k)))"
+/*
+guarded formula characterizing all satisfying traces:
+"∃ spiI spiR nI nR I R keymat keys newspiI newspiR childKey #j #k.
+  (IKE_SA_CompletedFullI( spiI, spiR, nI, nR, I, R, keymat, keys
+   ) @ #j) ∧
+  (CreateChildSAR( I, R, keymat, newspiI, newspiR, childKey ) @ #k)
+ ∧
+  (#j < #k) ∧ (∀ #i. (CreateChildAliveness( I ) @ #i) ⇒ ¬(#i < #k))"
+*/
+by sorry
+
+lemma RekeyChild_aliveness_I [use_induction]:
+  all-traces
+  "∀ spiI spiR I R keys newKeys nI nR #i.
+    (REKEY_SA_CompleteI( I, R, keys, newKeys, spiI, spiR, nI, nR
+     ) @ #i) ⇒
+    (∃ #j. (REKEY_Aliveness( R ) @ #j) ∧ (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR I R keys newKeys nI nR #i.
+  (REKEY_SA_CompleteI( I, R, keys, newKeys, spiI, spiR, nI, nR
+   ) @ #i)
+ ∧
+  ∀ #j. (REKEY_Aliveness( R ) @ #j) ⇒ ¬(#j < #i)"
+*/
+by sorry
+
+lemma RekeyChild_aliveness_I_v2 [use_induction]:
+  all-traces
+  "∀ spiI spiR I R keys newKeys nI nR #i.
+    (REKEY_SA_CompleteI( I, R, keys, newKeys, spiI, spiR, nI, nR
+     ) @ #i) ⇒
+    ((∃ spiI1 spiR1 I1 keys1 newKeys1 nI1 nR1 #j.
+       (REKEY_SA_CompleteR( I1, R, keys1, newKeys1, spiI1, spiR1, nI1, nR1
+        ) @ #j) ∧
+       (#j < #i)) ∨
+     (∃ I1 keys1 spiI1 nI1 #j.
+       (REKEY_RequestI( R, I1, keys1, spiI1, nI1 ) @ #j) ∧ (#j < #i)))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR I R keys newKeys nI nR #i.
+  (REKEY_SA_CompleteI( I, R, keys, newKeys, spiI, spiR, nI, nR
+   ) @ #i)
+ ∧
+  (∀ spiI1 spiR1 I1 keys1 newKeys1 nI1 nR1 #j.
+    (REKEY_SA_CompleteR( I1, R, keys1, newKeys1, spiI1, spiR1, nI1, nR1
+     ) @ #j)
+   ⇒
+    ¬(#j < #i)) ∧
+  (∀ I1 keys1 spiI1 nI1 #j.
+    (REKEY_RequestI( R, I1, keys1, spiI1, nI1 ) @ #j) ⇒ ¬(#j < #i))"
+*/
+by sorry
+
+lemma RekeyChild_weak_agreement_I [use_induction]:
+  all-traces
+  "∀ spiI spiR I R keys newKeys nI nR #i.
+    (REKEY_SA_CompleteI( I, R, keys, newKeys, spiI, spiR, nI, nR
+     ) @ #i) ⇒
+    (∃ spiI1 spiR1 I.1 R.1 keys1 newKeys1 nI1 nR1 #j.
+      (REKEY_SA_CompleteR( I.1, R.1, keys1, newKeys1, spiI1, spiR1, nI1,
+                           nR1
+       ) @ #j) ∧
+      (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR I R keys newKeys nI nR #i.
+  (REKEY_SA_CompleteI( I, R, keys, newKeys, spiI, spiR, nI, nR
+   ) @ #i)
+ ∧
+  ∀ spiI1 spiR1 I.1 R.1 keys1 newKeys1 nI1 nR1 #j.
+   (REKEY_SA_CompleteR( I.1, R.1, keys1, newKeys1, spiI1, spiR1, nI1,
+                        nR1
+    ) @ #j)
+  ⇒
+   ¬(#j < #i)"
+*/
+by sorry
+
+lemma RekeyChild_weak_agreement_R [use_induction]:
+  all-traces
+  "∀ spiI spiR I R keys newKeys nI nR #i.
+    (REKEY_SA_CompleteR( I, R, keys, newKeys, spiI, spiR, nI, nR
+     ) @ #i) ⇒
+    (∃ spiI1 keys1 nI1 #j.
+      (REKEY_RequestI( I, R, keys1, spiI1, nI1 ) @ #j) ∧ (#j < #i))"
+/*
+guarded formula characterizing all counter-examples:
+"∃ spiI spiR I R keys newKeys nI nR #i.
+  (REKEY_SA_CompleteR( I, R, keys, newKeys, spiI, spiR, nI, nR
+   ) @ #i)
+ ∧
+  ∀ spiI1 keys1 nI1 #j.
+   (REKEY_RequestI( I, R, keys1, spiI1, nI1 ) @ #j) ⇒ ¬(#j < #i)"
+*/
+by sorry
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/*
+WARNING: the following wellformedness checks failed!
+
+Derivation Checks
+=================
+
+  Derivation checks timed out. Use --derivcheck-timeout=INT to configure timeout, 0 to deactivate.
+*/
+
+/*
+Generated from:
+Tamarin version 1.8.0
+Maude version 2.7.1
+Git revision: UNKNOWN, branch: UNKNOWN
+Compiled at: 2023-08-30 13:15:41.590881948 UTC
+*/
+
+end
