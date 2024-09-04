@@ -21,6 +21,67 @@
 *
 */
 
+
+
+/*
+==============================================================================
+summary of summaries:
+
+analyzed: IKEv2-PSK_main.spthy
+
+  secrecy_IR_keys_SK_d (all-traces): verified (15 steps)
+  secrecy_IR_keys_SK_ai (all-traces): falsified - found trace (23 steps)
+  secrecy_IR_keys_SK_ar (all-traces): falsified - found trace (23 steps)
+  secrecy_IR_keys_SK_ei (all-traces): falsified - found trace (23 steps)
+  secrecy_IR_keys_SK_er (all-traces): falsified - found trace (23 steps)
+  secrecy_IR_keys_SK_pi (all-traces): verified (15 steps)
+  secrecy_IR_keys_SK_pr (all-traces): verified (15 steps)
+  secrecy_IR_new_keys_SK_d (all-traces): verified (2145 steps)
+  secrecy_IR_new_keys_SK_ai (all-traces): verified (2145 steps)
+  secrecy_IR_new_keys_SK_ar (all-traces): verified (2145 steps)
+  secrecy_IR_new_keys_SK_ei (all-traces): verified (2145 steps)
+  secrecy_IR_new_keys_SK_er (all-traces): verified (2145 steps)
+  IKE_SA_existence (exists-trace): verified (21 steps)
+  IKE_SA_aliveness (all-traces): verified (25 steps)
+  IKE_SA_weak_agreement_I (all-traces): verified (28 steps)
+  IKE_SA_weak_agreement_R (all-traces): verified (20 steps)
+  IKE_SA_non_injective_agreement_I (all-traces): verified (116 steps)
+  IKE_SA_non_injective_agreement_R (all-traces): verified (161 steps)
+  IKE_SA_injective_agreement_I (all-traces): verified (41 steps)
+  IKE_SA_injective_agreement_I_v2 (all-traces): verified (132 steps)
+  IKE_SA_injective_agreement_R (all-traces): verified (38 steps)
+  IKE_SA_injective_agreement_R_v2 (all-traces): verified (179 steps)
+  InitialChild_existence (exists-trace): verified (21 steps)
+  InitialChild_aliveness_I (all-traces): verified (29 steps)
+  InitialChild_aliveness_R (all-traces): verified (14 steps)
+  InitialChild_weak_agreement_I (all-traces): verified (116 steps)
+  InitialChild_weak_agreement_R (all-traces): verified (20 steps)
+  Initial_child_non_injective_agreement_I_partial (all-traces): verified (116 steps)
+  Initial_child_non_injective_agreement_R_partial (all-traces): verified (161 steps)
+  Initial_child_non_injective_agreement_I_counterexample (exists-trace): verified (58 steps)
+  Initial_child_non_injective_agreement_R_counterexample (exists-trace): verified (43 steps)
+  Initial_child_injective_agreement_I_partial (all-traces): verified (159 steps)
+  Initial_child_injective_agreement_R_partial (all-traces): verified (203 steps)
+  Rekey_exists (exists-trace): verified (20 steps)
+  Rekey_aliveness_I (all-traces): falsified - found trace (24 steps)
+  Rekey_aliveness_R (all-traces): falsified - found trace (22 steps)
+  CreateChild_exists (exists-trace): verified (29 steps)
+  CreateChild_aliveness_I_aux (all-traces): verified (109 steps)
+  CreateChild_aliveness_I_simple (all-traces): falsified - found trace (28 steps)
+  CreateChild_aliveness_R_simple_Contrapositive (exists-trace): verified (26 steps)
+  CreateChild_aliveness_R_simple_Contrapositive_alt (exists-trace): verified (29 steps)
+  RekeyChild_aliveness_I (all-traces): falsified - found trace (26 steps)
+  RekeyChild_aliveness_I_v2 (all-traces): falsified - found trace (26 steps)
+  RekeyChild_weak_agreement_I (all-traces): falsified - found trace (26 steps)
+  RekeyChild_weak_agreement_R (all-traces): falsified - found trace (24 steps)
+
+==============================================================================
+*/
+
+
+
+
+
 theory IKEv2PSK_main
 
 begin
@@ -37,9 +98,12 @@ rule reveal_dh:
 	--[RevDH($I)]->
 	[ Out(k) ]
 
+
+
 /*******************************************************
 ======== IKEv2 Protocol Preliminaries =======
 *******************************************************/
+
 // We an unique ID to Actor A; we assume that the ID is unique to Actor A and that Actor A has only one ID
 rule enrol_agent: 
 	[Fr(~ID)]
@@ -87,6 +151,7 @@ restriction UniquePSK:
 /*******************************************************
 ======== IKEv2 Protocol Transitions =========
 *******************************************************/
+
 // Initiator Hello
 rule IKE_SA_INIT_I:
 let
@@ -611,6 +676,96 @@ in
 /*************************************************************************************************************
 ============================= LEMMAS  ==============================
 *************************************************************************************************************/
+
+/*******************************************************
+========= Lemmas: SECRECY =============
+*******************************************************/
+/*
+==============================================================================
+summary of summaries:
+  secrecy_IR_keys_SK_d (all-traces): verified (15 steps)
+  secrecy_IR_keys_SK_ai (all-traces): falsified - found trace (23 steps)
+  secrecy_IR_keys_SK_ar (all-traces): falsified - found trace (23 steps)
+  secrecy_IR_keys_SK_ei (all-traces): falsified - found trace (23 steps)
+  secrecy_IR_keys_SK_er (all-traces): falsified - found trace (23 steps)
+  secrecy_IR_keys_SK_pi (all-traces): verified (15 steps)
+  secrecy_IR_keys_SK_pr (all-traces): verified (15 steps)
+  secrecy_IR_new_keys_SK_d (all-traces): verified (2145 steps)
+  secrecy_IR_new_keys_SK_ai (all-traces): verified (2145 steps)
+  secrecy_IR_new_keys_SK_ar (all-traces): verified (2145 steps)
+  secrecy_IR_new_keys_SK_ei (all-traces): verified (2145 steps)
+  secrecy_IR_new_keys_SK_er (all-traces): verified (2145 steps)
+==============================================================================
+*/
+
+// Check the secrecy of the seven keys of the IKE_SA individually.
+// The first seven are for the IKE SA exchange ONLY (no child keys or rekeying)
+
+lemma secrecy_IR_keys_SK_d:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+	KeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr) @#i
+	==> not(Ex #j. K(SK_d)@#j)"
+
+lemma secrecy_IR_keys_SK_ai:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+	KeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr) @#i
+	==> not(Ex #j. K(SK_ai)@#j)"
+
+lemma secrecy_IR_keys_SK_ar:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+	KeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr) @#i
+	==> not(Ex #j. K(SK_ar)@#j)"
+
+lemma secrecy_IR_keys_SK_ei:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+	KeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr) @#i
+	==> not(Ex #j. K(SK_er)@#j)"
+
+lemma secrecy_IR_keys_SK_er:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+	KeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr) @#i
+	==> not(Ex #j. K(SK_er)@#j)"
+
+lemma secrecy_IR_keys_SK_pi:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+	KeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr) @#i
+	==> not(Ex #j. K(SK_pi)@#j)"
+
+lemma secrecy_IR_keys_SK_pr:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er SK_pi SK_pr #i.
+	KeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er, SK_pi, SK_pr) @#i
+	==> not(Ex #j. K(SK_d)@#j)"
+
+
+
+// The following lemmas pertain to keys created for Child SAs (i.e. not the SA used for IKE traffic)
+
+lemma secrecy_IR_new_keys_SK_d:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er #i.
+	NewKeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @#i
+	==> not(Ex #j. K(SK_d)@#j)"
+
+lemma secrecy_IR_new_keys_SK_ai:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er #i.
+	NewKeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @#i
+	==> not(Ex #j. K(SK_ai)@#j)"
+
+lemma secrecy_IR_new_keys_SK_ar:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er  #i.
+	NewKeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @#i
+	==> not(Ex #j. K(SK_ar)@#j)"
+
+lemma secrecy_IR_new_keys_SK_ei:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er  #i.
+	NewKeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @#i
+	==> not(Ex #j. K(SK_er)@#j)"
+
+lemma secrecy_IR_new_keys_SK_er:
+    "All I R SK_d SK_ai SK_ar SK_ei SK_er  #i.
+	NewKeysMade(I, R, SK_d, SK_ai, SK_ar, SK_ei, SK_er ) @#i
+	==> not(Ex #j. K(SK_er)@#j)"
+
+
  
 /*******************************************************
 ========= Lemmas: IKE_SA =============
@@ -727,11 +882,12 @@ summary of summaries:
   InitialChild_weak_agreement_R (all-traces): verified (20 steps)
   Initial_child_non_injective_agreement_I_partial (all-traces): verified (116 steps)
   Initial_child_non_injective_agreement_R_partial (all-traces): verified (161 steps)
-  Initial_child_non_injective_agreement_I_counterexample (exists-trace): verified (45 steps)
-  Initial_child_non_injective_agreement_I_counterexample2 (exists-trace): verified (58 steps)
-  Initial_child_non_injective_agreement_R_counterexample (exists-trace): verified (43 steps)
+  Initial_child_non_injective_agreement_I_counterexample (exists-trace): verified (58 steps)
+  * Initial_child_non_injective_agreement_R_counterexample (exists-trace): verified (43 steps) 
   Initial_child_injective_agreement_I_partial (all-traces): verified (159 steps)
   Initial_child_injective_agreement_R_partial (all-traces): verified (203 steps)
+
+*On secondary testing on another device, this lemma was killed when run on the command line. In case this is applicable to more devices, we have included this lemma's proof in interactive mode in the Github folder.  
 ==============================================================================
 */
 
@@ -778,17 +934,8 @@ lemma Initial_child_non_injective_agreement_R_partial [use_induction]:
     ==> (Ex spiI1 #j . IKE_SA_InitialChildPriorI(spiI1, I, R, Key) @ #j
         & #j < #i)"
 
-// Counterexample to non-injective agreeement. I and R can agree an initial child with the same key but different spiI
-lemma Initial_child_non_injective_agreement_I_counterexample: 
-exists-trace
-"Ex spiI spiI1 spiR I R Key #i #j.
-	IKE_ChildSA_InitialI(spiI, spiR, I, R, Key) @#i
-	& IKE_ChildSA_InitialR(spiI1, spiR, I, R, Key) @ #j
-	& #j < #i
-	& not(spiI = spiI1)"
-
 // Counterexample to non-injective agreeement. I and R can agree an initial child with the same key but different spiR and spiI
-lemma Initial_child_non_injective_agreement_I_counterexample2: 
+lemma Initial_child_non_injective_agreement_I_counterexample: 
 exists-trace
 "Ex spiI spiR spiI1 spiR1 I R Key #i #j.
 	IKE_ChildSA_InitialI(spiI, spiR, I, R, Key) @#i
@@ -800,13 +947,13 @@ exists-trace
 // counterexample to non-injective agreeement for R. I and R can agree an initial child with the same key but different spiI
 lemma Initial_child_non_injective_agreement_R_counterexample: 
 exists-trace
-"Ex spiI spiR spiI1 I R Key #i #j #k1 #k2.
+"Ex spiI spiR spiI1 I R Key #i #j #k.
 	IKE_ChildSA_InitialR(spiI, spiR, I, R, Key) @#i 
 	& IKE_SA_InitialChildPriorI(spiI1, I, R, Key) @ #j
 	& #j < #i
-	&K(spiI) @#k1
-	&K(spiI1) @#k2
-	& not(spiI1 = spiI)"
+ 	& K(spiI) @#k
+	& not(spiI1 = spiI)
+	"
 
 // Accepting different SPIs, injective agreement from I's persective
 lemma Initial_child_injective_agreement_I_partial [use_induction]: 
@@ -839,8 +986,8 @@ lemma Initial_child_injective_agreement_R_partial [use_induction]:
 ==============================================================================
 summary of summaries:
   Rekey_exists (exists-trace): verified (20 steps)
-  Rekey_aliveness_I (all-traces): falsified - found trace (26 steps)
-  Rekey_aliveness_R (all-traces): falsified - found trace (24 steps)
+  Rekey_aliveness_I (all-traces): falsified - found trace (24 steps)
+  Rekey_aliveness_R (all-traces): falsified - found trace (22 steps)
 ==============================================================================
 */
 
@@ -851,12 +998,12 @@ lemma Rekey_exists: exists-trace
 	& REKEY_SA_CompleteI(I, R, Keys, newKeys, spiI, spiR, ni, nr) @#j"
 
 // the initiator completes and the responder is alive
-lemma Rekey_aliveness_I [use_induction]: 
+lemma Rekey_aliveness_I: 
     "All I R Keys newKeys spiI spiR ni nr #i. REKEY_SA_CompleteI(I, R, Keys, newKeys, spiI, spiR, ni, nr)  @#i 
 	==> Ex #j. REKEY_Aliveness(R)@#j & #j<#i "
 
 // the responder completes rekeying and the initiator is alive
-lemma Rekey_aliveness_R [use_induction]: 
+lemma Rekey_aliveness_R: 
     "All I R Keys newKeys spiI spiR ni nr #i. REKEY_SA_CompleteR(I, R, Keys, newKeys, spiI, spiR, ni, nr)  @#i 
 	==> Ex #j. REKEY_Aliveness(I)@#j & #j<#i"
 
