@@ -1,21 +1,55 @@
 /*
+ * The skeleton of this model is based on:
  * Original Protocol:	IKEv2
  * Original Modeler:	Tobias Heider & Stefan-Lukas Gazdag & Sophia Grundner-Culemann
- * Original Date:	10/2019
- * Original Status:	Done
+ * Original Date:	    10/2019
  *
- * Modified Protocol:	 IKEv2 PPK
- * Modeler:               Sophie Stevens
- * Date:	                1/2023
- * Status:	                Complete
+ * Modified Protocol:	 IKEv2 PPK RFC 8784 extension
+ * Modeler:              Sophie Stevens, Paul D. Rowe, Emily Gray
+ * Date:	             09/2024
+ * Status:	             Complete
 *
 * RFC PPK: https://www.rfc-editor.org/rfc/rfc8784.pdf
 * RFC IKEv2: https://www.rfc-editor.org/rfc/pdfrfc/rfc7296.txt.pdf
 *
+* In this protocol we consider:
+* **** creating the initial SA
+* **** creating a child SA
+* **** rekeying the initial SA
+*
+* We do not consider rekeying a Child SA.
+*
+* Rekeying MUST happen before Create Child SA is intiated.
+*
 * In this model, we are interested in processes subsequent to the first IKE_SA step. Thus we assume that this has been completed
 * We give the adversary knowledge of all Out variables within the IKE_SA, and the keys that the adversary can learn.
 * Specifically, the adversary knows: SK_ai, SK_ar, SK_ei, SK_er
+*
+==============================================================================
+summary of summaries:
+
+analyzed: IKEv2-PSK_createChild_after_Rekey.spthy
+
+  SA_exists (exists-trace): verified (4 steps)
+  Rekey_exists (exists-trace): verified (14 steps)
+  CreateChild_exists (exists-trace): verified (24 steps)
+  CreateChild_aliveness_I (all-traces): verified (12 steps)
+  CreateChild_aliveness_R (all-traces): verified (12 steps)
+  CreateChild_weakAgreement_I_aux (exists-trace): verified (20 steps)
+  CreateChild_weakAgreement_R_aux (exists-trace): verified (18 steps)
+  CreateChild_weakAgreement_I (all-traces): verified (201 steps)
+  CreateChild_weakAgreement_R (all-traces): verified (78 steps)
+  CreateChild_nonInjectiveAgreement_I (all-traces): verified (201 steps)
+  CreateChild_nonInjectiveAgreement_R (all-traces): verified (78 steps)
+  CreateChild_InjectiveAgreement_I (all-traces): verified (4 steps)
+  CreateChild_InjectiveAgreement_I_v2 (all-traces): verified (201 steps)
+  CreateChild_InjectiveAgreement_R (all-traces): verified (4 steps)
+  CreateChild_InjectiveAgreement_R_v2 (all-traces): verified (78 steps)
+
+==============================================================================
 */
+
+
 
 theory IKEv2PSK_createChild_afterRekey
 
